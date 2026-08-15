@@ -1,22 +1,118 @@
-# nf-core scrnaseq (oxo-flow port)
+# oxo-flow-scrnaseq — Single-cell RNA-seq: alignment, quantification and QC
+
+> ★ Verified · ⇄ Official port of [`nf-core/scrnaseq`](https://github.com/nf-core/scrnaseq) @ `4.2.0` — same tools, same versions, same commands. Part of the [oxo-flow-community catalog](https://oxo-flow-community.github.io/).
 
 [![CI](https://github.com/oxo-flow-community/oxo-flow-scrnaseq/actions/workflows/ci.yml/badge.svg)](https://github.com/oxo-flow-community/oxo-flow-scrnaseq/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Single-cell RNA-seq pipeline: FastQC read QC, genome preparation (gunzip, GTF gene
-filter), Cell Ranger reference building and per-sample `cellranger count`, 10x
-matrix→h5ad conversion, CellBender background removal, h5ad concatenation and
-Seurat/SingleCellExperiment conversion, and a final MultiQC report. This is a port of
-the **nf-core/scrnaseq** pipeline restricted to the `aligner = cellranger` default
-execution path (FastQC → Cell Ranger count per sample → MultiQC aggregation, with the
-h5ad/conversion layer in between).
+Run single-cell RNA-seq analysis on 10x Genomics data from raw FASTQ reads to a
+final MultiQC report: FastQC read QC, Cell Ranger reference preparation and
+per-sample `cellranger count` (alignment and quantification, with optional BAM
+output), conversion of the raw and filtered 10x matrices to h5ad, CellBender
+ambient-RNA background removal, sample-wise h5ad concatenation, and optional
+export to Seurat and SingleCellExperiment objects. The workflow covers the
+Cell Ranger execution path of nf-core/scrnaseq (see the fidelity table for the
+exact scope); other aligners and assays such as ATAC or multiome are not
+included. All results land under `results/`.
+
+## Installation
+
+### 1. Install oxo-flow
+
+This workflow requires **oxo-flow >= 0.11.0**. The recommended way is the
+prebuilt release binary:
+
+```bash
+curl -fL -o oxo-flow.tar.gz \
+  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
+tar xzf oxo-flow.tar.gz
+sudo mv oxo-flow /usr/local/bin/
+```
+
+Alternatively, install via conda:
+
+```bash
+conda install -c bioconda oxo-flow-cli
+```
+
+Note: the conda package may lag behind releases; binaries for other platforms
+are available on the [releases page](https://github.com/Traitome/oxo-flow/releases).
+
+### 2. Get this workflow
+
+```bash
+git clone https://github.com/oxo-flow-community/oxo-flow-scrnaseq.git
+cd oxo-flow-scrnaseq
+```
+
+### 3. Requirements
+
+- **Reference data** (you provide; see the `[config]` section of `main.oxoflow`):
+  a genome FASTA (optionally gzipped) and a gene-annotation GTF (optionally
+  gzipped) — defaults `refs/refdata.fa.gz` and `refs/refdata.gtf.gz`. The Cell
+  Ranger reference is built from them by the workflow into
+  `refs/cellranger_reference` unless you set `build_cellranger_index = false`
+  and point `transcriptome` at a pre-built index.
+- **Sample data**: one raw 10x FASTQ pair per sample as
+  `raw/<sample>_R1.fastq.gz` / `raw/<sample>_R2.fastq.gz` (one pair per sample),
+  plus a `samplesheet.csv` with columns `sample,fastq_1,fastq_2,protocol,expected_cells`
+  for the combined-h5ad step.
+- **Compute**: up to 12 CPUs and 72 GB RAM per rule (Cell Ranger `mkref` /
+  `count`); h5ad conversion, CellBender and concatenation rules use 6 CPUs /
+  36 GB, QC/prep rules 1–2 CPUs / 6–12 GB. Per-sample rules run concurrently,
+  so peak usage scales with the number of samples and `-j`.
+- **Tool delivery**: containers with pinned images — every rule pins the exact
+  upstream nf-core container string (no `latest`), so Docker (or Singularity)
+  is required at runtime. Conda alternatives for local runs ship in `envs/`,
+  except the Cell Ranger rules, which are docker-only (the upstream modules
+  refuse conda profiles).
+
+## Usage
+
+```bash
+# 1. install oxo-flow (see Installation)
+# 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz, a samplesheet.csv,
+#    and reference files (refs/refdata.fa.gz, refs/refdata.gtf.gz) — see fixtures/
+# 3. preview the plan
+oxo-flow dry-run main.oxoflow
+# 4. run
+oxo-flow run main.oxoflow -j 8
+# 5. run a subset
+oxo-flow run main.oxoflow -t multiqc --samples first:2
+```
+
+### Configuration
+
+- **Default config knobs** mirror upstream params: `protocol=auto` → `--chemistry auto`,
+  `save_align_intermeds=true` → `--create-bam true`, `expected_cells=""` → no
+  `--expect-cells` flag.
+- **`.gz` detection**: upstream decides at runtime whether to gunzip (`fasta.endsWith('.gz')`);
+  oxo-flow cannot inspect file names, so `fasta_gz`/`gtf_gz` are explicit flags. When a
+  plain FASTA/GTF is used, set the flag to `false` and point `fasta_prepared`/`gtf_prepared`
+  at the actual file paths.
+- **Pre-built index**: with `build_cellranger_index=false` and `transcriptome=<index dir>`,
+  `cellranger_mkgtf`/`cellranger_mkref` are skipped and count runs directly (upstream
+  `--cellranger_index` behavior).
+- **Reference chain** (defaults shown): `fasta=refs/refdata.fa.gz` →
+  `fasta_prepared=refs/refdata.fa` → `gtf_filtered=refs/refdata_genes.gtf` →
+  `gtf_mkgtf=refs/refdata_genes.filtered.gtf` → `transcriptome=refs/cellranger_reference`.
+  When enabling `gtf_source_fix`, also set `gtf_mkgtf_input` to the source-fixed file.
+- **Conda alternatives**: the workflow pins the exact upstream container images; conda
+  env yamls ship in `envs/` for local runs (cellranger rules are docker-only — the
+  upstream modules refuse conda profiles). `python-igraph`/`leidenalg` are not pinned
+  upstream and were resolved at port time (2026-08-15) to conda-forge releases.
+- **`samplesheet`** (for `CONCAT_H5AD`): user CSV with the upstream columns
+  (`sample,fastq_1,fastq_2,protocol,expected_cells`); see `test/fixtures/samplesheet.csv`.
+  The `raw/` symlink in the repo root points at `test/fixtures/raw/` so `validate`/`dry-run`
+  see the fixture reads as existing inputs; replace the fixtures with real data for runs.
 
 ## Source
 
 Ported from **[nf-core/scrnaseq](https://github.com/nf-core/scrnaseq)**, version
-`4.2.0` (commit `3fc17b4f971a89e47c88337de71d0e777ffad8cc`, MIT). This port is
-maintained independently and **may lag the upstream** — check the `4.2.0` above and
-the fidelity table below for the exact ported state. Port date: 2026-08-15.
+`4.2.0` (commit `3fc17b4f971a89e47c88337de71d0e777ffad8cc`, MIT). Created
+2026-08-15; this workflow may lag behind upstream releases. Upstream
+attribution and licensing details are in [NOTICE.md](NOTICE.md); the upstream
+MIT license is retained verbatim in [LICENSE.upstream](LICENSE.upstream).
 
 ## Fidelity
 
@@ -57,66 +153,19 @@ strings and conda pins are copied verbatim from the upstream modules (all pinned
 | `paramsSummaryMultiqc` / methods-description MultiQC inputs | nf-core reporting boilerplate; MultiQC still aggregates FastQC + Cell Ranger + versions. |
 | `skip_cellranger_renaming` (multi-lane samples) | One fastq pair per sample is supported; the staging rename hard-codes lane `L001`. |
 
-## Gotchas / port decisions
+## Test
 
-- **Default config knobs** mirror upstream params: `protocol=auto` → `--chemistry auto`,
-  `save_align_intermeds=true` → `--create-bam true`, `expected_cells=""` → no
-  `--expect-cells` flag.
-- **`.gz` detection**: upstream decides at runtime whether to gunzip (`fasta.endsWith('.gz')`);
-  oxo-flow cannot inspect file names, so `fasta_gz`/`gtf_gz` are explicit flags. When a
-  plain FASTA/GTF is used, set the flag to `false` and point `fasta_prepared`/`gtf_prepared`
-  at the actual file paths.
-- **Pre-built index**: with `build_cellranger_index=false` and `transcriptome=<index dir>`,
-  `cellranger_mkgtf`/`cellranger_mkref` are skipped and count runs directly (upstream
-  `--cellranger_index` behavior).
-- **Reference chain** (defaults shown): `fasta=refs/refdata.fa.gz` →
-  `fasta_prepared=refs/refdata.fa` → `gtf_filtered=refs/refdata_genes.gtf` →
-  `gtf_mkgtf=refs/refdata_genes.filtered.gtf` → `transcriptome=refs/cellranger_reference`.
-  When enabling `gtf_source_fix`, also set `gtf_mkgtf_input` to the source-fixed file.
-- **Conda alternatives**: the workflow pins the exact upstream container images; conda
-  env yamls ship in `envs/` for local runs (cellranger rules are docker-only — the
-  upstream modules refuse conda profiles). `python-igraph`/`leidenalg` are not pinned
-  upstream and were resolved at port time (2026-08-15) to conda-forge releases.
-- **`samplesheet`** (for `CONCAT_H5AD`): user CSV with the upstream columns
-  (`sample,fastq_1,fastq_2,protocol,expected_cells`); see `test/fixtures/samplesheet.csv`.
-  The `raw/` symlink in the repo root points at `test/fixtures/raw/` so `validate`/`dry-run`
-  see the fixture reads as existing inputs; replace the fixtures with real data for runs.
-
-## Quickstart
+Run the acceptance test — `validate`, `lint`, and a `dry-run` plan check with
+the bundled fixtures:
 
 ```bash
-# 1. install oxo-flow (see Requirements)
-# 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz, a samplesheet.csv,
-#    and reference files (refs/refdata.fa.gz, refs/refdata.gtf.gz) — see fixtures/
-# 3. preview the plan
-oxo-flow dry-run main.oxoflow
-# 4. run
-oxo-flow run main.oxoflow -j 8
-# 5. run a subset
-oxo-flow run main.oxoflow -t multiqc --samples first:2
+bash test/run.sh
 ```
-
-## Requirements
-
-- **oxo-flow ≥ 0.11.0** — install the prebuilt binary:
-
-```bash
-curl -fL -o oxo-flow.tar.gz \
-  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
-tar xzf oxo-flow.tar.gz
-sudo mv oxo-flow /usr/local/bin/
-```
-
-- Conda users may alternatively `conda install -c bioconda oxo-flow-cli`
-  (note: the bioconda package currently lags the release binary at 0.10.2 —
-  some 0.11.0 format features may not validate).
-- Docker at runtime, per the environments declared in `main.oxoflow`
-  (upstream nf-core container images; conda alternatives in `envs/`).
 
 ## License
 
 Apache-2.0. Copyright (c) 2026 oxo-flow-community. Upstream attribution in
-[NOTICE.md](NOTICE.md); upstream MIT license retained verbatim in
+[NOTICE.md](NOTICE.md); the upstream MIT license is retained verbatim in
 [LICENSE.upstream](LICENSE.upstream).
 
 ## Community
