@@ -175,7 +175,7 @@ description = "Build the Cell Ranger reference from FASTA and filtered GTF"
 input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
 output = ["{config.transcriptome}/genome.fa"]
 when = "config.build_cellranger_index"
-shell = "cellranger mkref --genome={config.transcriptome} --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {threads} --localmem $(echo {memory} | tr -dc '0-9') --nthreads {threads}"
+shell = "cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {threads} --localmem $(echo {memory} | tr -dc '0-9') --nthreads {threads} && mv cellranger_reference {config.transcriptome}"
 
 [rules.resources]
 threads = 12
