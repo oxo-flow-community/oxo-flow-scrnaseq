@@ -131,7 +131,7 @@ threads = 2
 memory = "12G"
 
 [rules.environment]
-docker = "biocontainers/python:3.9--1"
+docker = "quay.io/biocontainers/python:3.9--1"
 
 # ---------------------------------------------------------------------------
 # PREPARE_GENOME: optional iGenomes GTF source-field fix (upstream GAWK as GTF_SOURCE_FIX)
