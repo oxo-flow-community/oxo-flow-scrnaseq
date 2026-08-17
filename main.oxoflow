@@ -16,11 +16,12 @@ expected_cells = ""        # samplesheet `expected_cells` column -> `--expect-ce
 save_align_intermeds = true   # -> `--create-bam true`
 out_dir = "results"
 
-# GB passed to cellranger's --localmem (mkref/count). The rule's
-# resources.memory (72G) stays the scheduler budget; cellranger itself
-# must not be told to grab the whole budget on a shared/local machine —
-# that value caused a 10-hour swap-thrash on a 3.7 GB test box (live run).
-cellranger_localmem = 8
+# GB passed to cellranger's --localmem (mkref/count). 0 = auto: the
+# engine's effective memory (declared value clamped to the machine) —
+# cellranger's jobmngr aborts when --localmem exceeds the free RAM
+# (live: '6.3GB less memory than expected was free' on a 3.7GB box).
+# Set a positive number to force a value.
+cellranger_localmem = 0
 
 # reference genome (upstream --fasta / --gtf; may be .gz)
 fasta = "refs/refdata.fa.gz"
@@ -181,7 +182,7 @@ description = "Build the Cell Ranger reference from FASTA and filtered GTF"
 input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
 output = ["{config.transcriptome}/genome.fa"]
 when = "config.build_cellranger_index"
-shell = "cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {threads} --localmem {config.cellranger_localmem} --nthreads {threads} && mv cellranger_reference {config.transcriptome}"
+shell = "LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} / 1024 )); cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
 
 [rules.resources]
 threads = 12
@@ -211,7 +212,8 @@ cp {input[0]} fastq_all/{sample}_S1_L001_R1_001.fastq.gz
 cp {input[1]} fastq_all/{sample}_S1_L001_R2_001.fastq.gz
 # upstream ext.args: --chemistry <protocol> --create-bam <save_align_intermeds> [+ --expect-cells when set]
 if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
-cellranger count --id {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {threads} --localmem {config.cellranger_localmem} --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
+LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} / 1024 ))
+cellranger count --id {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
 # publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellranger/count/)
 mkdir -p results/cellranger/count/{sample}/outs
 cp -r {sample}/outs/. results/cellranger/count/{sample}/outs/
