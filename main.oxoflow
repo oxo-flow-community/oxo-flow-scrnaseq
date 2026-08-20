@@ -17,11 +17,11 @@ save_align_intermeds = true   # -> `--create-bam true`
 out_dir = "results"
 
 # GB passed to cellranger's --localmem (mkref/count). 0 = auto: 2/3 of
-# the engine's effective memory (declared value clamped to the machine)
-# — cellranger's jobmngr waits forever when --localmem exceeds the
-# actually-free RAM (live: 'Need 3 GB ... (2.89 GB available)' looped
-# for hours on a 3.7GB box; the 2/3 headroom keeps the gate clear).
-# Set a positive number to force a value.
+# the actually-free physical memory (/proc/meminfo MemAvailable, 1 GB
+# floor) — never the engine's effective memory, which counts swap:
+# cellranger's jobmngr waits forever when --localmem exceeds the free
+# RAM (live: 'Need 6 GB ... (2.6 GB available)' looped for hours on a
+# 3.7GB box). Set a positive number to force a value.
 cellranger_localmem = 0
 
 # reference genome (upstream --fasta / --gtf; may be .gz)
@@ -183,7 +183,7 @@ description = "Build the Cell Ranger reference from FASTA and filtered GTF"
 input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
 output = ["{config.transcriptome}/fasta/genome.fa"]
 when = "config.build_cellranger_index"
-shell = "rm -rf mkref_cellranger_reference cellranger_reference {config.transcriptome}; LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
+shell = "rm -rf mkref_cellranger_reference cellranger_reference {config.transcriptome}; LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=1; cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
 
 [rules.resources]
 threads = 12
@@ -216,7 +216,7 @@ cp {input[0]} fastq_all/{sample}_S1_L001_R1_001.fastq.gz
 cp {input[1]} fastq_all/{sample}_S1_L001_R2_001.fastq.gz
 # upstream ext.args: --chemistry <protocol> --create-bam <save_align_intermeds> [+ --expect-cells when set]
 if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
-LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 ))
+LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=1
 cellranger count --id {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
 # publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellranger/count/)
 mkdir -p results/cellranger/count/{sample}/outs
