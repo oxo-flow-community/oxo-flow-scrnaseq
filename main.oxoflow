@@ -48,7 +48,7 @@ skip_cellbender = false
 skip_multiqc = false
 multiqc_title = ""         # -> `--title` when set
 multiqc_config = "assets/multiqc_config.yml"
-samplesheet = "samplesheet.csv"   # user samplesheet consumed by CONCAT_H5AD (same columns as upstream)
+samplesheet = "test/fixtures/samplesheet.csv"   # consumed by CONCAT_H5AD (same columns as upstream)
 
 # engine-injected: config.samples_list holds the merged sample list (cohort group)
 
@@ -324,7 +324,12 @@ expand_inputs = [
     { pattern = "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad", variables = { sample = "config.samples_list" } }
 ]
 output = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} results/cellranger/mtx_conversions/*/*_filtered_matrix.h5ad"
+shell = """IN=""
+while IFS=, read -r sample _; do
+    [ "$sample" = "sample" ] && continue
+    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_filtered_matrix.h5ad"
+done < {config.samplesheet}
+python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
 threads = 6
@@ -342,7 +347,12 @@ expand_inputs = [
 ]
 output = ["results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
 when = "!config.skip_cellbender"
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} results/cellranger/mtx_conversions/*/*_cellbender_filter_matrix.h5ad"
+shell = """IN=""
+while IFS=, read -r sample _; do
+    [ "$sample" = "sample" ] && continue
+    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_cellbender_filter_matrix.h5ad"
+done < {config.samplesheet}
+python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
 threads = 6
@@ -360,7 +370,12 @@ expand_inputs = [
 ]
 output = ["results/cellranger/mtx_conversions/combined_raw_matrix.h5ad"]
 when = "config.skip_cellbender"
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} results/cellranger/mtx_conversions/*/*_raw_matrix.h5ad"
+shell = """IN=""
+while IFS=, read -r sample _; do
+    [ "$sample" = "sample" ] && continue
+    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_raw_matrix.h5ad"
+done < {config.samplesheet}
+python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
 threads = 6
