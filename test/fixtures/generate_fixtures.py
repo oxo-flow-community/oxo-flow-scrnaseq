@@ -4,20 +4,25 @@
 The previous kit was 200 reads with 200 distinct barcodes: cellranger's
 auto chemistry detection aborted (TXRNGR10001: minimum 10000 reads) and
 cell-calling would have found 200 one-read cells. This generator emits,
-per sample, 10000 cell read pairs (100 barcodes x 100 reads each) plus
-2000 ambient reads across 2000 distinct empty-droplet barcodes (1-2
-reads each): 10x v2 structure (R1 = 16bp cell barcode + 10bp UMI),
-R2 = 75bp drawn from the reference gene intervals (refs/refdata.fa +
-refdata_genes GTF exons), so chemistry detection sees >=10k reads and
-cell-calling finds ~100 real cells per sample. The ambient fraction
-matters: cellbender's empty-drop priors need a non-cell UMI
-distribution to fit — a fixture whose non-cell barcodes all have
-exactly 0 reads degenerates (live: IndexError in
-_peak_density_given_cutoff on empty noncell_counts).
+per sample, ~25k cell reads across 100 barcodes with a realistic
+log-normal count spread (median ~150, 50-2000) plus ~4k ambient reads
+across 2000 distinct empty-droplet barcodes (1-3 reads each): 10x v2
+structure (R1 = 16bp cell barcode + 10bp UMI), R2 = 75bp drawn from the
+reference gene intervals (refs/refdata.fa + refdata_genes GTF exons), so
+chemistry detection sees >=10k reads and cell-calling finds ~100 real
+cells per sample.
+
+Both statistical shapes matter for cellbender remove-background:
+- the cell-count SPREAD is essential — its empty-count estimation puts
+  the cutoff INSIDE the cell-count distribution; a flat fixture (every
+  cell exactly 100 reads) leaves the <=-cutoff partition empty and
+  _peak_density_given_cutoff dies with an IndexError (live);
+- the ambient droplets give the count distribution a non-cell tail.
 
 Regenerate with:  python3 test/fixtures/generate_fixtures.py [refdata.fa]
 """
 import gzip
+import math
 import os
 import random
 import sys
@@ -25,10 +30,12 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.join(HERE, "raw")
 REFDATA = sys.argv[1] if len(sys.argv) > 1 else "refs/refdata.fa"
-READS_PER_SAMPLE = 10000
 N_BARCODES = 100
 N_AMBIENT_BARCODES = 2000
 AMBIENT_READS = (1, 3)  # inclusive range per empty droplet
+CELL_READS_LOGNORM = (math.log(150), 0.9)  # (log-median, log-sigma)
+MIN_CELL_READS = 50
+MAX_CELL_READS = 2000
 SEED = 5
 
 # gene intervals in refdata.fa coordinates (1-based, inclusive) — keep in
@@ -67,16 +74,20 @@ def main():
     if len(barcodes) < need:
         raise SystemExit(f"{barcode_file} has {len(barcodes)} barcodes, need {need}")
     os.makedirs(RAW, exist_ok=True)
+    total_cell_reads = 0
     for sample in ("S1", "S2"):
         srng = random.Random(SEED + (1 if sample == "S2" else 0))
         r1_lines, r2_lines = [], []
-        # cell reads: 100 barcodes x 100 reads
-        for i in range(READS_PER_SAMPLE):
-            bc = barcodes[i % N_BARCODES]
-            r1, r2 = make_read(srng, genome, bc, f"@{sample}_barcode{i % N_BARCODES}_r{i}")
-            r1_lines.append(r1)
-            r2_lines.append(r2)
-        # ambient reads in empty droplets (cellbender priors; see docstring)
+        # cell reads: realistic log-normal per-cell count spread
+        sample_cell_reads = 0
+        for i in range(N_BARCODES):
+            n_reads = max(MIN_CELL_READS, min(MAX_CELL_READS, int(srng.lognormvariate(*CELL_READS_LOGNORM))))
+            for j in range(n_reads):
+                r1, r2 = make_read(srng, genome, barcodes[i], f"@{sample}_barcode{i}_r{j}")
+                r1_lines.append(r1)
+                r2_lines.append(r2)
+            sample_cell_reads += n_reads
+        # ambient reads in empty droplets (non-cell tail; see docstring)
         for i in range(N_AMBIENT_BARCODES):
             bc = barcodes[N_BARCODES + i]
             n_reads = srng.randint(*AMBIENT_READS)
@@ -89,10 +100,9 @@ def main():
         ) as f2:
             f1.write("\n".join(r1_lines) + "\n")
             f2.write("\n".join(r2_lines) + "\n")
-    print(
-        f"scrnaseq fixtures regenerated: {READS_PER_SAMPLE} cell reads + "
-        f"{N_AMBIENT_BARCODES} ambient droplets x 2 samples ({N_BARCODES} cell barcodes)"
-    )
+        print(f"  {sample}: {sample_cell_reads} cell reads, ambient droplets x{N_AMBIENT_BARCODES}")
+        total_cell_reads += sample_cell_reads
+    print(f"scrnaseq fixtures regenerated: {total_cell_reads} cell reads total ({N_BARCODES} barcodes/sample)")
 
 
 if __name__ == "__main__":
