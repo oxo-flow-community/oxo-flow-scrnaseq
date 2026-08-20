@@ -217,7 +217,7 @@ cp {input[1]} fastq_all/{sample}_S1_L001_R2_001.fastq.gz
 # upstream ext.args: --chemistry <protocol> --create-bam <save_align_intermeds> [+ --expect-cells when set]
 if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
 LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=1
-cellranger count --id {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
+cellranger count --id {sample} --sample {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
 # publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellranger/count/)
 mkdir -p results/cellranger/count/{sample}/outs
 cp -r {sample}/outs/. results/cellranger/count/{sample}/outs/
