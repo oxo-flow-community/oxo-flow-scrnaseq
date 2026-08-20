@@ -16,10 +16,11 @@ expected_cells = ""        # samplesheet `expected_cells` column -> `--expect-ce
 save_align_intermeds = true   # -> `--create-bam true`
 out_dir = "results"
 
-# GB passed to cellranger's --localmem (mkref/count). 0 = auto: the
-# engine's effective memory (declared value clamped to the machine) —
-# cellranger's jobmngr aborts when --localmem exceeds the free RAM
-# (live: '6.3GB less memory than expected was free' on a 3.7GB box).
+# GB passed to cellranger's --localmem (mkref/count). 0 = auto: 2/3 of
+# the engine's effective memory (declared value clamped to the machine)
+# — cellranger's jobmngr waits forever when --localmem exceeds the
+# actually-free RAM (live: 'Need 3 GB ... (2.89 GB available)' looped
+# for hours on a 3.7GB box; the 2/3 headroom keeps the gate clear).
 # Set a positive number to force a value.
 cellranger_localmem = 0
 
@@ -88,7 +89,7 @@ threads = 2
 memory = "12G"
 
 [rules.environment]
-docker = "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
+singularity = "docker://quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
 
 # ---------------------------------------------------------------------------
 # PREPARE_GENOME: gunzip FASTA/GTF (upstream GUNZIP as GUNZIP_FASTA / GUNZIP_GTF)
@@ -106,7 +107,7 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
+singularity = "docker://community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
 
 [[rules]]
 name = "gunzip_gtf"
@@ -121,7 +122,7 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
+singularity = "docker://community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
 
 # ---------------------------------------------------------------------------
 # PREPARE_GENOME: filter GTF to sequences in the genome FASTA (upstream GTF_GENE_FILTER)
@@ -138,7 +139,7 @@ threads = 2
 memory = "12G"
 
 [rules.environment]
-docker = "quay.io/biocontainers/python:3.9--1"
+singularity = "docker://quay.io/biocontainers/python:3.9--1"
 
 # ---------------------------------------------------------------------------
 # PREPARE_GENOME: optional iGenomes GTF source-field fix (upstream GAWK as GTF_SOURCE_FIX)
@@ -156,7 +157,7 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/gawk:5.3.1--e09efb5dfc4b8156"
+singularity = "docker://community.wave.seqera.io/library/gawk:5.3.1--e09efb5dfc4b8156"
 
 # ---------------------------------------------------------------------------
 # CELLRANGER_ALIGN: build the Cell Ranger reference (upstream CELLRANGER_MKGTF + CELLRANGER_MKREF)
@@ -174,22 +175,22 @@ threads = 2
 memory = "12G"
 
 [rules.environment]
-docker = "quay.io/nf-core/cellranger:10.0.0"
+singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
 
 [[rules]]
 name = "cellranger_mkref"
 description = "Build the Cell Ranger reference from FASTA and filtered GTF"
 input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
-output = ["{config.transcriptome}/genome.fa"]
+output = ["{config.transcriptome}/fasta/genome.fa"]
 when = "config.build_cellranger_index"
-shell = "LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} / 1024 )); cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
+shell = "rm -rf mkref_cellranger_reference cellranger_reference {config.transcriptome}; LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
 
 [rules.resources]
 threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "quay.io/nf-core/cellranger:10.0.0"
+singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
 
 # ---------------------------------------------------------------------------
 # CELLRANGER_ALIGN: per-sample Cell Ranger count (upstream CELLRANGER_COUNT)
@@ -207,12 +208,15 @@ depends_on = ["cellranger_mkref"]
 shell = """
 # nf-core CELLRANGER_COUNT template: stage reads under Cell Ranger naming, then run count
 # (one fastq pair per sample; the module renames pairs to <sample>_S1_L<i:03d>_R1/R2_001.fastq.gz)
+# Fresh-dir semantics: a killed attempt leaves {sample}/ with a stale _lock,
+# and cellranger refuses to run in a dirty dir (same class as mkref).
+rm -rf {sample}
 mkdir -p fastq_all
 cp {input[0]} fastq_all/{sample}_S1_L001_R1_001.fastq.gz
 cp {input[1]} fastq_all/{sample}_S1_L001_R2_001.fastq.gz
 # upstream ext.args: --chemistry <protocol> --create-bam <save_align_intermeds> [+ --expect-cells when set]
 if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
-LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} / 1024 ))
+LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 ))
 cellranger count --id {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
 # publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellranger/count/)
 mkdir -p results/cellranger/count/{sample}/outs
@@ -224,7 +228,7 @@ threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "quay.io/nf-core/cellranger:10.0.0"
+singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
 
 # ---------------------------------------------------------------------------
 # MTX_TO_H5AD: convert raw/filtered 10x matrices to h5ad (upstream MTX_TO_H5AD)
@@ -241,7 +245,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
 
 [[rules]]
 name = "mtx_to_h5ad_filtered"
@@ -255,7 +259,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
 
 # ---------------------------------------------------------------------------
 # CellBender background removal on the raw h5ad (upstream CELLBENDER_REMOVEBACKGROUND)
@@ -280,7 +284,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/cellbender_webcolors:156d413fdfc16cdb"
+singularity = "docker://community.wave.seqera.io/library/cellbender_webcolors:156d413fdfc16cdb"
 
 # ---------------------------------------------------------------------------
 # ANNDATA_BARCODES: subset the raw h5ad to CellBender-filtered barcodes
@@ -301,7 +305,7 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/anndata_pandas_python_pyyaml:3f88bccf1cdade40"
+singularity = "docker://community.wave.seqera.io/library/anndata_pandas_python_pyyaml:3f88bccf1cdade40"
 
 # ---------------------------------------------------------------------------
 # H5AD_CONVERSION: concatenate per-sample h5ads per input_type (upstream CONCAT_H5AD)
@@ -321,7 +325,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
 
 [[rules]]
 name = "concat_h5ad_cellbender_filter"
@@ -339,7 +343,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
 
 [[rules]]
 name = "concat_h5ad_raw"
@@ -357,7 +361,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
 
 # ---------------------------------------------------------------------------
 # H5AD_CONVERSION: convert h5ads to Seurat/SCE RDS (upstream ANNDATAR_CONVERT)
@@ -377,7 +381,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 [[rules]]
 name = "anndatar_convert_cellbender_filter"
@@ -395,7 +399,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 [[rules]]
 name = "anndatar_convert_raw"
@@ -413,7 +417,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 [[rules]]
 name = "anndatar_convert_combined_filtered"
@@ -430,7 +434,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 [[rules]]
 name = "anndatar_convert_combined_cellbender_filter"
@@ -448,7 +452,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 [[rules]]
 name = "anndatar_convert_combined_raw"
@@ -466,7 +470,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
+singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_bioconductor-rhdf5_bioconductor-singlecellexperiment_r-seurat:a0f51df063bb9b2a"
 
 # ---------------------------------------------------------------------------
 # Collated software versions (upstream softwareVersionsToYAML + collectFile)
@@ -550,4 +554,4 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
+singularity = "docker://community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
