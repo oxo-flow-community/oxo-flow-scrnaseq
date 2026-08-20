@@ -274,6 +274,12 @@ output = [
 ]
 when = "!config.skip_cellbender"
 shell = """
+# fresh-dir semantics: a previous run leaves ckpt.tar.gz in the workdir and
+# cellbender resumes it (same workflow hash) instead of training — the posterior
+# then loads from the checkpoint and no {sample}_posterior.h5 is written
+# (live: "mv: cannot stat 'S1_posterior.h5'"). Upstream never sees stale
+# checkpoints because Nextflow work dirs are fresh per run.
+rm -f ckpt.tar.gz
 TMPDIR=. cellbender remove-background --cpu-threads {threads} --estimator-multiple-cpu --input {input} --output {sample}.h5
 mkdir -p results/cellranger/{sample}/cellbender_removebackground
 mv {sample}.h5 {sample}_filtered.h5 {sample}_posterior.h5 {sample}_cell_barcodes.csv {sample}_metrics.csv {sample}.pdf {sample}.log results/cellranger/{sample}/cellbender_removebackground/
