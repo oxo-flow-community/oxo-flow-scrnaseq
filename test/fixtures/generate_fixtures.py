@@ -4,13 +4,16 @@
 The previous kit was 200 reads with 200 distinct barcodes: cellranger's
 auto chemistry detection aborted (TXRNGR10001: minimum 10000 reads) and
 cell-calling would have found 200 one-read cells. This generator emits,
-per sample, ~25k cell reads across 100 barcodes with a realistic
-log-normal count spread (median ~150, 50-2000) plus ~4k ambient reads
-across 2000 distinct empty-droplet barcodes (1-3 reads each): 10x v2
+per sample, ~150k cell reads across 800 barcodes with a realistic
+log-normal count spread (median ~150, 50-2000) plus ~1.6k ambient reads
+across 800 distinct empty-droplet barcodes (1-3 reads each): 10x v2
 structure (R1 = 16bp cell barcode + 10bp UMI), R2 = 75bp drawn from the
 reference gene intervals (refs/refdata.fa + refdata_genes GTF exons), so
-chemistry detection sees >=10k reads and cell-calling finds ~100 real
-cells per sample.
+chemistry detection sees >=10k reads and cell-calling finds ~800 real
+cells per sample (the 800-cell / 800-empty-droplet ratio also keeps
+cellbender's encoder minibatches populated with cells — 100 cells
+among 2000 empties tripped 'Fewer than 4 cells passed to encoder
+minibatch', live).
 
 Both statistical shapes matter for cellbender remove-background:
 - the cell-count SPREAD is essential — its empty-count estimation puts
@@ -30,8 +33,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.join(HERE, "raw")
 REFDATA = sys.argv[1] if len(sys.argv) > 1 else "refs/refdata.fa"
-N_BARCODES = 100
-N_AMBIENT_BARCODES = 2000
+N_BARCODES = 800
+N_AMBIENT_BARCODES = 800
 AMBIENT_READS = (1, 3)  # inclusive range per empty droplet
 CELL_READS_LOGNORM = (math.log(150), 0.9)  # (log-median, log-sigma)
 MIN_CELL_READS = 50
@@ -63,7 +66,7 @@ def make_read(srng, genome, bc, rid):
 def main():
     genome = load_genome()
     rng = random.Random(SEED)
-    # REAL 10x v2 whitelist barcodes — the first 2100 of
+    # REAL 10x v2 whitelist barcodes — the first 1600 of
     # 737K-august-2016.txt (cellranger's SC3Pv2 whitelist, the same
     # whitelist the chemistry detector matches against). Random 16bp
     # barcodes fail detection even with 10k reads (live: TXRNGR10002).
