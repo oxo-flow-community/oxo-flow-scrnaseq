@@ -1,0 +1,17 @@
+# oxo-flow runtime state
+.oxo-flow/
+results/
+*.sif
+*.img
+*.mro
+
+# cellranger per-sample dirs and staged fastqs
+/S1/
+/S2/
+/fastq_all/
+/mkref_cellranger_reference/
+
+# reference build products — the .gz sources are tracked
+refs/*
+!refs/refdata.fa.gz
+!refs/refdata.gtf.gz

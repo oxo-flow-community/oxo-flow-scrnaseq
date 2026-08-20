@@ -61,6 +61,15 @@ cd oxo-flow-scrnaseq
   `count`); h5ad conversion, CellBender and concatenation rules use 6 CPUs /
   36 GB, QC/prep rules 1–2 CPUs / 6–12 GB. Per-sample rules run concurrently,
   so peak usage scales with the number of samples and `-j`.
+
+> **Cell Ranger memory sizing.** `mkref`/`count` auto-size `--localmem`
+> to 2/3 of the *actually free* physical memory (`/proc/meminfo`
+> MemAvailable, 1 GB floor) — never the machine's effective total, which
+> counts swap: cellranger's job manager waits forever when `--localmem`
+> exceeds the free RAM (live: `Need 6 GB ... (2.6 GB available)` looped
+> for hours on a 3.7 GB box). Real runs still want 10x's documented 8 GB
+> floor; the tiny test fixtures run on smaller machines with swap
+> absorbing overflow. Set `cellranger_localmem` to force a value.
 - **Tool delivery**: containers with pinned images — every rule pins the exact
   upstream nf-core container string (no `latest`), so Docker (or Singularity)
   is required at runtime. Conda alternatives for local runs ship in `envs/`,
@@ -72,7 +81,7 @@ cd oxo-flow-scrnaseq
 ```bash
 # 1. install oxo-flow (see Installation)
 # 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz, a samplesheet.csv,
-#    and reference files (refs/refdata.fa.gz, refs/refdata.gtf.gz) — see fixtures/
+#    and reference files (refs/refdata.fa.gz, refs/refdata.gtf.gz) — a synthetic 3-gene test reference is committed under refs/ (swap in a real FASTA/GTF for real data)
 # 3. preview the plan
 oxo-flow dry-run main.oxoflow
 # 4. run
@@ -105,6 +114,16 @@ oxo-flow run main.oxoflow -t multiqc --samples first:2
   (`sample,fastq_1,fastq_2,protocol,expected_cells`); see `test/fixtures/samplesheet.csv`.
   The `raw/` symlink in the repo root points at `test/fixtures/raw/` so `validate`/`dry-run`
   see the fixture reads as existing inputs; replace the fixtures with real data for runs.
+
+### Reference genome
+
+The pipeline expects `refs/refdata.fa.gz` + `refs/refdata.gtf.gz` and derives
+the rest: gunzip → `refs/refdata.fa|.gtf`, GTF gene filter →
+`refs/refdata_genes.gtf`, mkgtf → `refs/refdata_genes.filtered.gtf`, mkref →
+`refs/cellranger_reference/`. The committed synthetic reference is a
+3-protein-coding-gene chr1 (exons 100-500, 800-1300, 1500-1900) sized so
+mkref/count run on small machines; `test/fixtures/generate_fixtures.py` draws
+the test reads from those exons.
 
 ## Source
 

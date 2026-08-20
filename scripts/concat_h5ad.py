@@ -34,15 +34,29 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Concatenate per-sample h5ad files into a combined h5ad")
     parser.add_argument("--samplesheet", required=True, help="input samplesheet CSV")
     parser.add_argument("--output", required=True, help="output h5ad file")
-    parser.add_argument("--inputs", nargs="+", required=True, help="per-sample h5ad files of one input_type")
+    parser.add_argument("--inputs", nargs="+", default=None,
+                        help="per-sample h5ad files of one input_type (upstream contract)")
+    parser.add_argument("--input-type", choices=["filtered", "cellbender_filter", "raw"], default=None,
+                        help="when --inputs is omitted, derive per-sample paths from the samplesheet "
+                             "(results/cellranger/mtx_conversions/<sample>/<sample>_<input-type>_matrix.h5ad)")
     args = parser.parse_args()
 
     # Open samplesheet as dataframe
     df_samplesheet = read_samplesheet(args.samplesheet)
 
+    if args.inputs:
+        inputs = args.inputs
+    elif args.input_type:
+        inputs = [
+            f"results/cellranger/mtx_conversions/{sample}/{sample}_{args.input_type}_matrix.h5ad"
+            for sample in df_samplesheet.index
+        ]
+    else:
+        parser.error("either --inputs or --input-type is required")
+
     # find all h5ad and append to dict; keys are the basename minus '_matrix.h5ad'
     # (upstream uses str(path).replace("_matrix.h5ad", "") over files staged flat in the workdir)
-    dict_of_h5ad = {str(Path(path).name).replace("_matrix.h5ad", ""): sc.read_h5ad(path) for path in args.inputs}
+    dict_of_h5ad = {str(Path(path).name).replace("_matrix.h5ad", ""): sc.read_h5ad(path) for path in inputs}
 
     # concat h5ad files
     adata = ad.concat(dict_of_h5ad, label="sample", merge="unique", index_unique="_")
