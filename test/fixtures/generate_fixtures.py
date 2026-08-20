@@ -37,10 +37,10 @@ def load_genome():
 def main():
     genome = load_genome()
     rng = random.Random(SEED)
-    # REAL 10x v2 whitelist barcodes (the first 100 of
-    # 737K-fixed-rna-profiling, the same whitelist cellranger's chemistry
-    # detector matches against) — random 16bp barcodes fail detection
-    # even with 10k reads (live: instant count failure).
+    # REAL 10x v2 whitelist barcodes — the first 100 of
+    # 737K-august-2016.txt (cellranger's SC3Pv2 whitelist, the same
+    # whitelist the chemistry detector matches against). Random 16bp
+    # barcodes fail detection even with 10k reads (live: TXRNGR10002).
     barcode_file = os.path.join(HERE, "v2_barcodes.txt")
     with open(barcode_file) as fh:
         barcodes = [line.strip() for line in fh if line.strip()]
