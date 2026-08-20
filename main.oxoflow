@@ -324,7 +324,7 @@ expand_inputs = [
     { pattern = "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad", variables = { sample = "config.samples_list" } }
 ]
 output = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
-shell = """python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $(for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do printf "results/cellranger/mtx_conversions/%s/%s_filtered_matrix.h5ad " "$s" "$s"; done)"""
+shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type filtered --output {output}"
 
 [rules.resources]
 threads = 6
@@ -342,7 +342,7 @@ expand_inputs = [
 ]
 output = ["results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
 when = "!config.skip_cellbender"
-shell = """python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $(for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do printf "results/cellranger/mtx_conversions/%s/%s_cellbender_filter_matrix.h5ad " "$s" "$s"; done)"""
+shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type cellbender_filter --output {output}"
 
 [rules.resources]
 threads = 6
@@ -360,7 +360,7 @@ expand_inputs = [
 ]
 output = ["results/cellranger/mtx_conversions/combined_raw_matrix.h5ad"]
 when = "config.skip_cellbender"
-shell = """python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $(for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do printf "results/cellranger/mtx_conversions/%s/%s_raw_matrix.h5ad " "$s" "$s"; done)"""
+shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type raw --output {output}"
 
 [rules.resources]
 threads = 6
