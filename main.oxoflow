@@ -325,10 +325,9 @@ expand_inputs = [
 ]
 output = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
 shell = """IN=""
-while IFS=, read -r sample _; do
-    [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_filtered_matrix.h5ad
-done < {config.samplesheet}
+for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do
+    IN="$IN results/cellranger/mtx_conversions/$s/$s"_filtered_matrix.h5ad
+done
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
@@ -348,10 +347,9 @@ expand_inputs = [
 output = ["results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
 when = "!config.skip_cellbender"
 shell = """IN=""
-while IFS=, read -r sample _; do
-    [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_cellbender_filter_matrix.h5ad
-done < {config.samplesheet}
+for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do
+    IN="$IN results/cellranger/mtx_conversions/$s/$s"_cellbender_filter_matrix.h5ad
+done
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
@@ -371,10 +369,9 @@ expand_inputs = [
 output = ["results/cellranger/mtx_conversions/combined_raw_matrix.h5ad"]
 when = "config.skip_cellbender"
 shell = """IN=""
-while IFS=, read -r sample _; do
-    [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_raw_matrix.h5ad
-done < {config.samplesheet}
+for s in $(printf "%s" "{config.samples_list}" | tr "," " "); do
+    IN="$IN results/cellranger/mtx_conversions/$s/$s"_raw_matrix.h5ad
+done
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
 [rules.resources]
