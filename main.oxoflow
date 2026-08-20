@@ -545,6 +545,10 @@ cp results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml .
 # upstream ext.args: --title when multiqc_title is set
 if [ -n "{config.multiqc_title}" ]; then TITLE_ARG="--title {config.multiqc_title}"; else TITLE_ARG=""; fi
 multiqc --force ${TITLE_ARG} --config {config.multiqc_config} .
+# fresh-dir semantics: a resumed run keeps the previous results/ tree
+# and mv refuses to merge into a non-empty dir (live: "cannot overwrite
+# 'results/multiqc/multiqc_data': Directory not empty")
+rm -rf results/multiqc
 mkdir -p results/multiqc
 mv multiqc_report.html multiqc_data results/multiqc/
 """
