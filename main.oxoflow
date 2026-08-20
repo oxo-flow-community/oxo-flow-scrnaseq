@@ -327,7 +327,7 @@ output = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
 shell = """IN=""
 while IFS=, read -r sample _; do
     [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_filtered_matrix.h5ad"
+    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_filtered_matrix.h5ad
 done < {config.samplesheet}
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
@@ -350,7 +350,7 @@ when = "!config.skip_cellbender"
 shell = """IN=""
 while IFS=, read -r sample _; do
     [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_cellbender_filter_matrix.h5ad"
+    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_cellbender_filter_matrix.h5ad
 done < {config.samplesheet}
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
@@ -373,7 +373,7 @@ when = "config.skip_cellbender"
 shell = """IN=""
 while IFS=, read -r sample _; do
     [ "$sample" = "sample" ] && continue
-    IN="$IN results/cellranger/mtx_conversions/$sample/${sample}_raw_matrix.h5ad"
+    IN="$IN results/cellranger/mtx_conversions/$sample/$sample"_raw_matrix.h5ad
 done < {config.samplesheet}
 python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --output {output} $IN"""
 
