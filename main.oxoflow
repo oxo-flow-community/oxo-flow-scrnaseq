@@ -374,7 +374,7 @@ output = [
     "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.seurat.rds",
     "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.sce.rds",
 ]
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
@@ -392,7 +392,7 @@ output = [
     "results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.sce.rds",
 ]
 when = "!config.skip_cellbender"
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
@@ -410,7 +410,7 @@ output = [
     "results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.sce.rds",
 ]
 when = "config.skip_cellbender"
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
@@ -427,7 +427,7 @@ output = [
     "results/cellranger/mtx_conversions/combined_filtered_matrix.seurat.rds",
     "results/cellranger/mtx_conversions/combined_filtered_matrix.sce.rds",
 ]
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
@@ -445,7 +445,7 @@ output = [
     "results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.sce.rds",
 ]
 when = "!config.skip_cellbender"
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
@@ -463,7 +463,7 @@ output = [
     "results/cellranger/mtx_conversions/combined_raw_matrix.sce.rds",
 ]
 when = "config.skip_cellbender"
-shell = "Rscript scripts/anndatar_convert.R --input {input} --output-seurat {output[0]} --output-sce {output[1]}"
+shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
 [rules.resources]
 threads = 6
