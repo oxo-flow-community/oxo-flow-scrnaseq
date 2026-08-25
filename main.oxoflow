@@ -1,19 +1,24 @@
-# oxo-flow port of nf-core/scrnaseq 4.2.0 (default path: aligner=cellranger)
+# oxo-flow port of nf-core/scrnaseq 4.2.0 (all aligner branches)
 # Upstream commit: 3fc17b4f971a89e47c88337de71d0e777ffad8cc (tag 4.2.0)
 # Fidelity notes and the upstream-process -> rule mapping live in README.md.
 
 [workflow]
 name = "oxo-flow-scrnaseq"
 version = "1.0.0"
-description = "Single-cell RNA-seq pipeline: FastQC, Cell Ranger count, h5ad conversion, CellBender background removal, MultiQC (port of nf-core/scrnaseq 4.2.0, aligner=cellranger path)"
+description = "Single-cell RNA-seq pipeline: FastQC, alignment/quantification (cellranger | cellrangerarc | simpleaf | kallisto | star), h5ad conversion, CellBender background removal, MultiQC (port of nf-core/scrnaseq 4.2.0)"
 author = "oxo-flow-community"
 
 [config]
-# --aligner / --protocol (port implements the cellranger branch; see README fidelity table)
+# --aligner / --protocol. The port implements ALL upstream aligner branches:
+# cellranger (default, matches upstream's most-tested path), simpleaf (upstream
+# default aligner), kallisto (kallisto/bustools), star (STARsolo) and
+# cellrangerarc (multiome ATAC+GEX). Protocol values are mapped per aligner
+# inside the alignment rules (upstream protocols.json); 'auto' is only valid
+# for cellranger/cellrangerarc, exactly like upstream.
 aligner = "cellranger"
-protocol = "auto"          # passed verbatim as `--chemistry` (10x auto-detection)
-expected_cells = ""        # samplesheet `expected_cells` column -> `--expect-cells` when set
-save_align_intermeds = true   # -> `--create-bam true`
+protocol = "auto"          # cellranger/arc: 'auto' or 10XV1-4; simpleaf/kallisto/star: 10XV1-4/dropseq(/smartseq)
+expected_cells = ""        # samplesheet `expected_cells` column -> --expect-cells/--soloCellFilter when set
+save_align_intermeds = true   # -> `--create-bam true` (cellranger) / publish the BAM (star)
 out_dir = "results"
 
 # GB passed to cellranger's --localmem (mkref/count). 0 = auto: 2/3 of
@@ -42,6 +47,37 @@ gtf_source_fixed = "refs/refdata_genes.source_fixed.gtf"
 build_cellranger_index = true
 transcriptome = "refs/cellranger_reference"
 
+# cellrangerarc reference (multiome ATAC+GEX)
+cellrangerarc_reference = "refs/cellrangerarc_reference"
+cellrangerarc_config = ""   # optional mkref config json (upstream --cellrangerarc_config); auto-generated when empty
+
+# simpleaf (upstream default aligner)
+simpleaf_index = ""         # pre-built index dir; empty = build into refs/simpleaf_index
+skip_qcatch = false
+simpleaf_umi_resolution = "cr-like"
+remove_doublets = false
+qcatch_n_partitions = ""    # qcatch --n_partitions when set (for protocols without a chemistry mapping)
+transcript_fasta = ""       # transcript FASTA for simpleaf index building (mutually exclusive with fasta/gtf)
+txp2gene = ""               # t2g map (required with transcript_fasta; also used as the kallisto t2g)
+
+# barcode whitelist for simpleaf/star (upstream maps it automatically per
+# protocol in assets/protocols.json; the port uses one explicit path — set it
+# per protocol: 10x_V1..V4_barcode_whitelist.txt.gz under assets/whitelist/)
+whitelist = "assets/whitelist/10x_V3_barcode_whitelist.txt.gz"
+
+# kallisto/bustools
+kallisto_index = ""         # pre-built kb_ref_out.idx; empty = build from refs
+kb_workflow = "standard"    # standard | lamanno | nac (any non-standard builds the intron index too)
+kb_t1c = ""                 # optional cdna_t2c.txt override
+kb_t2c = ""                 # optional intron_t2c.txt override
+
+# STARsolo
+star_index = ""             # pre-built STAR index dir; empty = build into refs/star_index
+star_index_legacy = false   # upgrade a legacy 2.6.x iGenomes index (genomeParameters rewrite)
+star_feature = "Gene"       # --soloFeatures (Gene | Gene Velocyto | ...)
+star_ignore_sjdbgtf = false # skip --sjdbGTFfile
+seq_center = ""             # --outSAMattrRGline CN field when set
+
 # QC / reporting knobs
 skip_fastqc = false
 skip_cellbender = false
@@ -58,6 +94,9 @@ samples = ["S1", "S2"]
 
 # ---------------------------------------------------------------------------
 # FASTQC: per-sample read QC (upstream FASTQC, label process_low)
+# Deviation: skipped for aligner=cellrangerarc — arc samples contribute five
+# files (GEX R1/R2 + ATAC R1/R2/R3), which a single static input pattern cannot
+# express; upstream runs FastQC on all of them.
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "fastqc"
@@ -69,21 +108,22 @@ output = [
     "results/fastqc/{sample}_2_fastqc.html",
     "results/fastqc/{sample}_2_fastqc.zip",
 ]
-when = "!config.skip_fastqc"
+when = "!config.skip_fastqc && config.aligner != 'cellrangerarc'"
 shell = """
 # nf-core FASTQC module: stage reads under sample-prefixed names, then run fastqc
 printf "%s %s\\n" raw/{sample}_R1.fastq.gz {sample}_1.fastq.gz raw/{sample}_R2.fastq.gz {sample}_2.fastq.gz | while read old_name new_name; do
-    [ -f "${new_name}" ] || ln -s $old_name $new_name
+    [ -f "$new_name" ] || ln -s $old_name $new_name
 done
 # FastQC total RAM = threads * --memory; module passes memory/cpus, clamped to [100, 10000]
 mem_mb=$(( $(echo {memory} | tr -dc '0-9') * 1024 / {threads} ))
 [ "$mem_mb" -gt 10000 ] && mem_mb=10000
 [ "$mem_mb" -lt 100 ] && mem_mb=100
-fastqc --quiet --threads {threads} --memory ${mem_mb} {sample}_1.fastq.gz {sample}_2.fastq.gz
+fastqc --quiet --threads {threads} --memory $mem_mb {sample}_1.fastq.gz {sample}_2.fastq.gz
 mkdir -p results/fastqc
 mv {sample}_1_fastqc.html {sample}_1_fastqc.zip {sample}_2_fastqc.html {sample}_2_fastqc.zip results/fastqc/
 """
 
+log = "logs/fastqc.log"
 [rules.resources]
 threads = 2
 memory = "12G"
@@ -102,6 +142,7 @@ output = ["{config.fasta_prepared}"]
 when = "config.fasta_gz"
 shell = "gzip -cd {config.fasta} > {config.fasta_prepared}"
 
+log = "logs/gunzip_fasta.log"
 [rules.resources]
 threads = 1
 memory = "6G"
@@ -117,6 +158,7 @@ output = ["{config.gtf_prepared}"]
 when = "config.gtf_gz"
 shell = "gzip -cd {config.gtf} > {config.gtf_prepared}"
 
+log = "logs/gunzip_gtf.log"
 [rules.resources]
 threads = 1
 memory = "6G"
@@ -134,6 +176,7 @@ input = ["{config.fasta_prepared}", "{config.gtf_prepared}"]
 output = ["{config.gtf_filtered}"]
 shell = "python3 scripts/filter_gtf_for_genes_in_genome.py --gtf {config.gtf_prepared} --fasta {config.fasta_prepared} -o {config.gtf_filtered}"
 
+log = "logs/gtf_gene_filter.log"
 [rules.resources]
 threads = 2
 memory = "12G"
@@ -152,6 +195,7 @@ output = ["{config.gtf_source_fixed}"]
 when = "config.gtf_source_fix"
 shell = """awk 'BEGIN { FS = OFS = "\\t" } /^#/ { print; next } NF >= 2 { gsub(/ /, "_", $2) } { print }' {input} > {output}"""
 
+log = "logs/gtf_source_fix.log"
 [rules.resources]
 threads = 1
 memory = "6G"
@@ -167,9 +211,10 @@ name = "cellranger_mkgtf"
 description = "Filter GTF to protein_coding/lncRNA/pseudogene biotypes for Cell Ranger"
 input = ["{config.gtf_mkgtf_input}"]
 output = ["{config.gtf_mkgtf}"]
-when = "config.build_cellranger_index"
+when = "config.aligner == 'cellranger' && config.build_cellranger_index"
 shell = "cellranger mkgtf {config.gtf_mkgtf_input} {config.gtf_mkgtf} --attribute=gene_biotype:protein_coding --attribute=gene_biotype:lncRNA --attribute=gene_biotype:pseudogene"
 
+log = "logs/cellranger_mkgtf.log"
 [rules.resources]
 threads = 2
 memory = "12G"
@@ -182,9 +227,10 @@ name = "cellranger_mkref"
 description = "Build the Cell Ranger reference from FASTA and filtered GTF"
 input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
 output = ["{config.transcriptome}/fasta/genome.fa"]
-when = "config.build_cellranger_index"
+when = "config.aligner == 'cellranger' && config.build_cellranger_index"
 shell = "rm -rf mkref_cellranger_reference cellranger_reference {config.transcriptome}; LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=1; cellranger mkref --genome=cellranger_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM --nthreads {effective_threads} && mv cellranger_reference {config.transcriptome}"
 
+log = "logs/cellranger_mkref.log"
 [rules.resources]
 threads = 12
 memory = "72G"
@@ -200,11 +246,12 @@ name = "cellranger_count"
 description = "Cell Ranger count per sample (reads staged under Cell Ranger naming, single lane L001)"
 input = ["raw/{sample}_R1.fastq.gz", "raw/{sample}_R2.fastq.gz", "{config.transcriptome}"]
 output = [
-    "results/cellranger/count/{sample}/outs/filtered_feature_bc_matrix.h5",
-    "results/cellranger/count/{sample}/outs/raw_feature_bc_matrix.h5",
-    "results/cellranger/count/{sample}/outs/web_summary.html",
+    "results/{config.aligner}/count/{sample}/outs/filtered_feature_bc_matrix.h5",
+    "results/{config.aligner}/count/{sample}/outs/raw_feature_bc_matrix.h5",
+    "results/{config.aligner}/count/{sample}/outs/web_summary.html",
 ]
 depends_on = ["cellranger_mkref"]
+when = "config.aligner == 'cellranger'"
 shell = """
 # nf-core CELLRANGER_COUNT template: stage reads under Cell Ranger naming, then run count
 # (one fastq pair per sample; the module renames pairs to <sample>_S1_L<i:03d>_R1/R2_001.fastq.gz)
@@ -217,12 +264,13 @@ cp {input[1]} fastq_all/{sample}_S1_L001_R2_001.fastq.gz
 # upstream ext.args: --chemistry <protocol> --create-bam <save_align_intermeds> [+ --expect-cells when set]
 if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
 LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=1
-cellranger count --id {sample} --sample {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} ${EXPECT_CELLS}
+cellranger count --id {sample} --sample {sample} --fastqs fastq_all --transcriptome {config.transcriptome} --localcores {effective_threads} --localmem $LMEM --chemistry {config.protocol} --create-bam {config.save_align_intermeds} $EXPECT_CELLS
 # publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellranger/count/)
-mkdir -p results/cellranger/count/{sample}/outs
-cp -r {sample}/outs/. results/cellranger/count/{sample}/outs/
+mkdir -p results/{config.aligner}/count/{sample}/outs
+cp -r {sample}/outs/. results/{config.aligner}/count/{sample}/outs/
 """
 
+log = "logs/cellranger_count.log"
 [rules.resources]
 threads = 12
 memory = "72G"
@@ -231,15 +279,464 @@ memory = "72G"
 singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
 
 # ---------------------------------------------------------------------------
-# MTX_TO_H5AD: convert raw/filtered 10x matrices to h5ad (upstream MTX_TO_H5AD)
+# SIMPLEAF (upstream default aligner): index + quant + qcatch (upstream SIMPLEAF_INDEX / SIMPLEAF_QUANT / QCATCH)
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "simpleaf_index"
+description = "Build a simpleaf (piscem) index from genome FASTA+GTF or a transcript FASTA"
+input = ["{config.fasta_prepared}", "{config.gtf_filtered}", "{config.transcript_fasta}", "{config.txp2gene}"]
+output = ["refs/simpleaf_index/index"]
+when = "config.aligner == 'simpleaf' && config.simpleaf_index == ''"
+shell = """
+# upstream input_args: transcript_fasta > genome fasta+gtf; txp2gene required in transcript mode
+if [ -n "{config.transcript_fasta}" ]; then
+    [ -n "{config.txp2gene}" ] || { echo "txp2gene file is required when using transcript_fasta to build the index" >&2; exit 1; }
+    SEQ_ARGS="--ref-seq {config.transcript_fasta}"
+else
+    SEQ_ARGS="--fasta {config.fasta_prepared} --gtf {config.gtf_filtered}"
+fi
+# export required var
+export ALEVIN_FRY_HOME=.
+# set maximum number of file descriptors for temp files
+ulimit -n 2048
+# prep simpleaf
+simpleaf set-paths
+# run simpleaf index
+simpleaf index --threads {threads} $SEQ_ARGS -o refs/simpleaf_index
+"""
+
+log = "logs/simpleaf_index.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0"
+
+[[rules]]
+name = "simpleaf_quant"
+description = "simpleaf quant: map reads and quantify with alevin-fry (unfiltered permit list)"
+input = ["raw/{sample}_R1.fastq.gz", "raw/{sample}_R2.fastq.gz"]
+output = ["results/simpleaf/{sample}/simpleaf_quant/af_quant"]
+depends_on = ["simpleaf_index"]
+when = "config.aligner == 'simpleaf'"
+shell = """
+# upstream guard: only cellranger supports protocol = 'auto'
+[ "{config.protocol}" = "auto" ] && { echo "Only cellranger supports protocol = 'auto'. Please specify the protocol manually!" >&2; exit 1; }
+case "{config.protocol}" in
+    10XV1) CHEM="10xv1" ;;
+    10XV2) CHEM="10xv2" ;;
+    10XV3) CHEM="10xv3" ;;
+    10XV4) CHEM="10xv4-3p" ;;
+    dropseq) CHEM="dropseq" ;;
+    *) echo "Unsupported protocol '{config.protocol}' for simpleaf" >&2; exit 1 ;;
+esac
+# upstream txp2gene channel: index-built t2g, user txp2gene, or empty
+T2G=""
+if [ -n "{config.txp2gene}" ]; then T2G="--t2g-map {config.txp2gene}"
+elif [ -f refs/simpleaf_index/ref/t2g_3col.tsv ]; then T2G="--t2g-map refs/simpleaf_index/ref/t2g_3col.tsv"
+fi
+# prebuilt index override (upstream ch_simpleaf_index); fail fast with a clear
+# message when the index is absent (the engine cannot know a prebuilt path)
+if [ -n "{config.simpleaf_index}" ]; then IDX={config.simpleaf_index}; else IDX=refs/simpleaf_index/index; fi
+[ -d "$IDX" ] || { echo "simpleaf index not found: $IDX (set --arg simpleaf_index=... or let simpleaf_index build it)" >&2; exit 1; }
+# upstream passes a whitelist per protocol (assets/protocols.json); none for dropseq
+if [ -n "{config.whitelist}" ]; then PL="--unfiltered-pl {config.whitelist}"; else PL=""; fi
+# export required var
+export ALEVIN_FRY_HOME=.
+# prep simpleaf
+simpleaf set-paths
+# run simpleaf quant (cell filtering: upstream hardcodes 'unfiltered-pl' -> input_type is always raw)
+simpleaf quant $T2G --chemistry $CHEM --index $IDX --reads1 raw/{sample}_R1.fastq.gz --reads2 raw/{sample}_R2.fastq.gz --resolution {config.simpleaf_umi_resolution} --output simpleaf_quant --threads {threads} --anndata-out $PL
+mkdir -p results/simpleaf/{sample}
+mv simpleaf_quant results/simpleaf/{sample}/simpleaf_quant
+"""
+
+log = "logs/simpleaf_quant.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0"
+
+[[rules]]
+name = "qcatch"
+description = "QCatch: empty-droplet QC report on the simpleaf quant output"
+input = ["results/simpleaf/{sample}/simpleaf_quant/af_quant"]
+output = [
+    "results/simpleaf/{sample}/qcatch/{sample}_qcatch_report.html",
+    "results/simpleaf/{sample}/qcatch/{sample}_filtered_quants.h5ad",
+    "results/simpleaf/{sample}/qcatch/{sample}_metrics_summary.csv",
+]
+when = "config.aligner == 'simpleaf' && !config.skip_qcatch"
+shell = """
+# upstream qcatch chemistry mapping (none for 10XV1/dropseq — QCatch infers or uses --n_partitions)
+case "{config.protocol}" in
+    10XV2) QCHEM="--chemistry 10X_3p_v2" ;;
+    10XV3) QCHEM="--chemistry 10X_3p_v3" ;;
+    10XV4) QCHEM="--chemistry 10X_3p_v4" ;;
+    *) QCHEM="" ;;
+esac
+if [ -n "{config.qcatch_n_partitions}" ]; then NP="--n_partitions {config.qcatch_n_partitions}"; else NP=""; fi
+if [ "{config.remove_doublets}" = "true" ]; then DBL="--remove_doublets --visualize_doublets"; else DBL=""; fi
+qcatch --input {input} --output qcatch $QCHEM --save_filtered_h5ad --export_summary_table $NP $DBL
+mkdir -p results/simpleaf/{sample}/qcatch
+mv qcatch/QCatch_report.html results/simpleaf/{sample}/qcatch/{sample}_qcatch_report.html
+mv qcatch/filtered_quants.h5ad results/simpleaf/{sample}/qcatch/{sample}_filtered_quants.h5ad
+mv qcatch/summary_table.csv results/simpleaf/{sample}/qcatch/{sample}_metrics_summary.csv
+"""
+
+log = "logs/qcatch.log"
+[rules.resources]
+threads = 2
+memory = "12G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/pip_qcatch:03b88593a5cca75b"
+
+# ---------------------------------------------------------------------------
+# KALLISTO_BUSTOOLS: kb ref + kb count (upstream KALLISTOBUSTOOLS_REF / KALLISTOBUSTOOLS_COUNT)
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "kallistobustools_ref_standard"
+description = "kb ref: build the kallisto index and t2g (standard workflow)"
+input = ["{config.fasta_prepared}", "{config.gtf_filtered}"]
+output = ["refs/kallisto/kb_ref_out.idx", "refs/kallisto/t2g.txt", "refs/kallisto/cdna.fa"]
+when = "config.aligner == 'kallisto' && config.kallisto_index == '' && config.kb_workflow == 'standard'"
+shell = "kb ref -i kb_ref_out.idx -g t2g.txt -f1 cdna.fa --workflow standard {config.fasta_prepared} {config.gtf_filtered} && mkdir -p refs/kallisto && mv kb_ref_out.idx t2g.txt cdna.fa refs/kallisto/"
+
+log = "logs/kallistobustools_ref_standard.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/kb-python:0.28.2--pyhdfd78af_2"
+
+[[rules]]
+name = "kallistobustools_ref_velocity"
+description = "kb ref: build the kallisto index, t2g and spliced/unspliced t2c maps (velocity workflows)"
+input = ["{config.fasta_prepared}", "{config.gtf_filtered}"]
+output = [
+    "refs/kallisto/kb_ref_out.idx",
+    "refs/kallisto/t2g.txt",
+    "refs/kallisto/cdna.fa",
+    "refs/kallisto/intron.fa",
+    "refs/kallisto/cdna_t2c.txt",
+    "refs/kallisto/intron_t2c.txt",
+]
+when = "config.aligner == 'kallisto' && config.kallisto_index == '' && config.kb_workflow != 'standard'"
+shell = "kb ref -i kb_ref_out.idx -g t2g.txt -f1 cdna.fa -f2 intron.fa -c1 cdna_t2c.txt -c2 intron_t2c.txt --workflow {config.kb_workflow} {config.fasta_prepared} {config.gtf_filtered} && mkdir -p refs/kallisto && mv kb_ref_out.idx t2g.txt cdna.fa intron.fa cdna_t2c.txt intron_t2c.txt refs/kallisto/"
+
+log = "logs/kallistobustools_ref_velocity.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/kb-python:0.28.2--pyhdfd78af_2"
+
+[[rules]]
+name = "kallistobustools_count"
+description = "kb count: quantify reads against the kallisto index (per sample)"
+input = ["raw/{sample}_R1.fastq.gz", "raw/{sample}_R2.fastq.gz"]
+output = ["results/kallisto/{sample}.count/counts_unfiltered/cells_x_genes.mtx"]
+depends_on = ["kallistobustools_ref_standard", "kallistobustools_ref_velocity"]
+when = "config.aligner == 'kallisto'"
+shell = """
+[ "{config.protocol}" = "auto" ] && { echo "Only cellranger supports protocol = 'auto'. Please specify the protocol manually!" >&2; exit 1; }
+case "{config.protocol}" in
+    10XV1) TECH="10XV1" ;;
+    10XV2) TECH="10XV2" ;;
+    10XV3) TECH="10XV3" ;;
+    10XV4) TECH="10XV4" ;;
+    dropseq) TECH="DROPSEQ" ;;
+    smartseq) TECH="SMARTSEQ" ;;
+    *) echo "Unsupported protocol '{config.protocol}' for kallisto" >&2; exit 1 ;;
+esac
+# index/t2g: user-provided (prebuilt mode) or built by kb ref; fail fast with a
+# clear message when absent (upstream asserts txp2gene in prebuilt mode)
+if [ -n "{config.kallisto_index}" ]; then IDX={config.kallisto_index}; else IDX=refs/kallisto/kb_ref_out.idx; fi
+if [ -n "{config.txp2gene}" ]; then T2G={config.txp2gene}; else T2G=refs/kallisto/t2g.txt; fi
+[ -f "$IDX" ] || { echo "kallisto index not found: $IDX (set --arg kallisto_index=... or let kb ref build it)" >&2; exit 1; }
+[ -f "$T2G" ] || { echo "t2g file not found: $T2G (pass --arg txp2gene=... in prebuilt-index mode)" >&2; exit 1; }
+# velocity t2c maps: user overrides, then the ones built by kb ref (velocity workflows)
+C1=""; C2=""
+[ -n "{config.kb_t1c}" ] && C1="-c1 {config.kb_t1c}"
+[ -n "{config.kb_t2c}" ] && C2="-c2 {config.kb_t2c}"
+[ -z "$C1" ] && [ -f refs/kallisto/cdna_t2c.txt ] && C1="-c1 refs/kallisto/cdna_t2c.txt"
+[ -z "$C2" ] && [ -f refs/kallisto/intron_t2c.txt ] && C2="-c2 refs/kallisto/intron_t2c.txt"
+# upstream ext.args: --workflow <kb_workflow> --filter; -m = memory.toGiga() - 1
+kb count -t {threads} -i $IDX -g $T2G $C1 $C2 -x $TECH --workflow {config.kb_workflow} --filter -o {sample}.count -m $(( {effective_memory_mb} / 1024 - 1 ))G raw/{sample}_R1.fastq.gz raw/{sample}_R2.fastq.gz
+mkdir -p results/kallisto
+mv {sample}.count results/kallisto/{sample}.count
+"""
+
+log = "logs/kallistobustools_count.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/kb-python:0.28.2--pyhdfd78af_2"
+
+# ---------------------------------------------------------------------------
+# STARSOLO: genomeGenerate + (optional) legacy index upgrade + per-sample STAR alignment
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "star_genomegenerate"
+description = "STAR genomeGenerate: build the STAR index (SAindexNbases heuristic)"
+input = ["{config.fasta_prepared}", "{config.gtf_filtered}"]
+output = ["refs/star_index/star/Genome"]
+when = "config.aligner == 'star' && config.star_index == ''"
+shell = """
+samtools faidx {config.fasta_prepared}
+NUM_BASES=`gawk '{sum = sum + $2}END{if ((log(sum)/log(2))/2 - 1 > 14) {printf "%.0f", 14} else {printf "%.0f", (log(sum)/log(2))/2 - 1}}' {config.fasta_prepared}.fai`
+mkdir -p refs/star_index
+STAR --runMode genomeGenerate --genomeDir star/ --genomeFastaFiles {config.fasta_prepared} --sjdbGTFfile {config.gtf_filtered} --runThreadN {threads} --genomeSAindexNbases $NUM_BASES --limitGenomeGenerateRAM $(( {effective_memory_mb} * 1024 * 1024 - 100000000 ))
+mv star refs/star_index/star
+"""
+
+log = "logs/star_genomegenerate.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/htslib_samtools_star_gawk:ae438e9a604351a4"
+
+[[rules]]
+name = "star_genomeparams_upgrade"
+description = "Rewrite a legacy STAR 2.6.x index genomeParameters.txt for STAR 2.7.4a+ (iGenomes opt-in)"
+input = ["{config.star_index}"]
+output = ["refs/star_index_upgraded/star/Genome", "refs/star_index_upgraded/star/genomeParameters.txt"]
+when = "config.aligner == 'star' && config.star_index != '' && config.star_index_legacy"
+shell = """
+# symlink every index file except genomeParameters.txt (upstream stageAs + loop)
+mkdir -p star refs/star_index_upgraded
+for f in {config.star_index}/*; do
+    name=$(basename "$f")
+    if [ "$name" = "genomeParameters.txt" ]; then
+        continue
+    fi
+    ln -s "$(readlink -f "$f")" "star/$name"
+done
+awk -F'\\t' -v OFS='\\t' '
+    $1 == "versionGenome" && $2 == "20201" {
+        print "versionGenome", "2.7.4a"
+        seen_upgraded = 1
+        next
+    }
+    $1 == "genomeType"          { seen_genomeType = 1 }
+    $1 == "genomeTransformType" { seen_transformType = 1 }
+    $1 == "genomeTransformVCF"  { seen_transformVCF = 1 }
+    { print }
+    END {
+        if (seen_upgraded) {
+            if (!seen_genomeType)    print "genomeType", "Full"
+            if (!seen_transformType) print "genomeTransformType", "None"
+            if (!seen_transformVCF)  print "genomeTransformVCF", "-"
+        }
+    }
+' "{config.star_index}/genomeParameters.txt" > star/genomeParameters.txt
+mv star refs/star_index_upgraded/star
+"""
+
+log = "logs/star_genomeparams_upgrade.log"
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/gawk:5.3.1--e09efb5dfc4b8156"
+
+[[rules]]
+name = "star_align"
+description = "STARsolo alignment with barcode/UMI handling (protocol-specific soloType/UMIlen)"
+input = [
+    "raw/{sample}_R1.fastq.gz",
+    "raw/{sample}_R2.fastq.gz",
+    "{config.gtf_filtered}",
+    "{config.whitelist}",
+    "{config.star_index}",
+]
+output = [
+    "results/star/{sample}/{sample}.Solo.out",
+    "results/star/{sample}/{sample}.Log.final.out",
+]
+depends_on = ["star_genomegenerate", "star_genomeparams_upgrade"]
+when = "config.aligner == 'star'"
+shell = """
+[ "{config.protocol}" = "auto" ] && { echo "Only cellranger supports protocol = 'auto'. Please specify the protocol manually!" >&2; exit 1; }
+# upstream protocols.json mapping: soloType + per-protocol extra_args (--soloUMIlen)
+case "{config.protocol}" in
+    10XV1) SOLO="CB_UMI_Simple"; UMI_LEN="--soloUMIlen 10" ;;
+    10XV2) SOLO="CB_UMI_Simple"; UMI_LEN="--soloUMIlen 10" ;;
+    10XV3) SOLO="CB_UMI_Simple"; UMI_LEN="--soloUMIlen 12" ;;
+    10XV4) SOLO="CB_UMI_Simple"; UMI_LEN="--soloUMIlen 12" ;;
+    dropseq) SOLO="CB_UMI_Simple"; UMI_LEN="" ;;
+    smartseq) SOLO="SmartSeq"; UMI_LEN="" ;;
+    *) echo "Unsupported protocol '{config.protocol}' for star" >&2; exit 1 ;;
+esac
+# index selection: upgraded legacy index > user-provided index > built index;
+# fail fast with a clear message when the chosen index is absent
+if [ -d refs/star_index_upgraded/star ]; then INDEX=refs/star_index_upgraded/star
+elif [ -n "{config.star_index}" ]; then INDEX={config.star_index}
+else INDEX=refs/star_index/star
+fi
+[ -d "$INDEX" ] || { echo "STAR index not found: $INDEX (set --arg star_index=... or let star_genomegenerate build it)" >&2; exit 1; }
+# upstream passes --soloCBwhitelist whenever a whitelist is in the channel
+WL=""
+if [ -n "{config.whitelist}" ]; then
+    if [[ "{config.whitelist}" == *.gz ]]; then gzip -cdf "{config.whitelist}" > whitelist.uncompressed.txt; else cp "{config.whitelist}" whitelist.uncompressed.txt; fi
+    WL="--soloCBwhitelist whitelist.uncompressed.txt"
+fi
+if [ -n "{config.expected_cells}" ]; then CELL_FILTER="--soloCellFilter CellRanger2.2 {config.expected_cells} 0.99 10"; else CELL_FILTER=""; fi
+if [ "{config.star_ignore_sjdbgtf}" = "true" ]; then IGNORE_GTF=""; else IGNORE_GTF="--sjdbGTFfile {config.gtf_filtered}"; fi
+if [ -n "{config.seq_center}" ]; then RG_LINE="--outSAMattrRGline ID:{sample} 'CN:{config.seq_center}' 'SM:{sample}'"; else RG_LINE="--outSAMattrRGline ID:{sample} 'SM:{sample}'"; fi
+# upstream ext.args: --readFilesCommand zcat --runDirPerm All_RWX --outWigType bedGraph --twopassMode Basic
+# --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM <memory>; reads passed REVERSE first
+STAR --genomeDir $INDEX --readFilesIn raw/{sample}_R2.fastq.gz raw/{sample}_R1.fastq.gz --runThreadN {threads} --outFileNamePrefix {sample}. --readFilesCommand zcat --runDirPerm All_RWX --outWigType bedGraph --twopassMode Basic --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM $(( {effective_memory_mb} * 1024 * 1024 )) $WL --soloType $SOLO --soloFeatures {config.star_feature} $UMI_LEN $CELL_FILTER $IGNORE_GTF $RG_LINE
+mkdir -p results/star/{sample}
+mv {sample}.Solo.out {sample}.Log.final.out {sample}.Log.out {sample}.Log.progress.out results/star/{sample}/
+if [ -f {sample}.Aligned.sortedByCoord.out.bam ]; then
+    if [ "{config.save_align_intermeds}" = "true" ]; then mv {sample}.Aligned.sortedByCoord.out.bam results/star/{sample}/
+    else rm {sample}.Aligned.sortedByCoord.out.bam; fi
+fi
+# upstream compresses the tsv/mtx files inside Solo.out before publishing
+find results/star/{sample}/{sample}.Solo.out \\( -name "*.tsv" -o -name "*.mtx" \\) -exec gzip {} \\;
+if [ -d results/star/{sample}/{sample}.Solo.out/Velocyto ]; then
+    mv results/star/{sample}/{sample}.Solo.out/Velocyto/raw results/star/{sample}/{sample}.Solo.out/Velocyto/velocyto_raw
+    mv results/star/{sample}/{sample}.Solo.out/Velocyto/filtered results/star/{sample}/{sample}.Solo.out/Velocyto/velocyto_filtered
+fi
+"""
+
+log = "logs/star_align.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://biocontainers/star:2.7.10b--h9ee0642_0"
+
+# ---------------------------------------------------------------------------
+# CELLRANGERARC_ALIGN: multiome ATAC+GEX reference + count (upstream CELLRANGERARC_MKGTF/MKREF/COUNT)
+# Deviation: the port stages five pre-named files per sample (raw/<sample>_gex_S1_L001_R{1,2}_001.fastq.gz
+# and raw/<sample>_atac_S1_L001_R{1,2,3}_001.fastq.gz) instead of the upstream
+# samplesheet's sample_type/fastq_barcode columns — the engine has no samplesheet
+# channel model, so the file names carry the assay.
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "cellrangerarc_mkgtf"
+description = "cellranger-arc mkgtf: filter GTF to protein_coding/lncRNA/pseudogene biotypes"
+input = ["{config.gtf_filtered}"]
+output = ["refs/cellrangerarc.filtered.gtf"]
+when = "config.aligner == 'cellrangerarc' && config.build_cellranger_index"
+shell = "cellranger-arc mkgtf {config.gtf_filtered} refs/cellrangerarc.filtered.gtf --attribute=gene_biotype:protein_coding --attribute=gene_biotype:lncRNA --attribute=gene_biotype:pseudogene"
+
+log = "logs/cellrangerarc_mkgtf.log"
+[rules.resources]
+threads = 2
+memory = "12G"
+
+[rules.environment]
+singularity = "docker://quay.io/nf-core/cellranger-arc:2.0.2"
+
+[[rules]]
+name = "cellrangerarc_mkref"
+description = "cellranger-arc mkref: build the multiome ATAC+GEX reference"
+input = ["{config.fasta_prepared}", "refs/cellrangerarc.filtered.gtf", "{config.cellrangerarc_config}"]
+output = ["{config.cellrangerarc_reference}/reference.json"]
+when = "config.aligner == 'cellrangerarc' && config.build_cellranger_index"
+shell = """
+# upstream generates the mkref config json when no --cellrangerarc_config is given
+if [ -n "{config.cellrangerarc_config}" ]; then
+    cp {config.cellrangerarc_config} config
+else
+    python3 - <<'CODE'
+config = open("config", "w")
+config.write("{\n")
+config.write('\torganism: "refdata"\n')
+config.write('\tgenome: ["refs/cellrangerarc_reference"]\n')
+config.write('\tinput_fasta: ["{config.fasta_prepared}"]\n')
+config.write('\tinput_gtf: ["refs/cellrangerarc.filtered.gtf"]\n')
+config.write("}")
+config.close()
+CODE
+fi
+rm -rf {config.cellrangerarc_reference}
+cellranger-arc mkref --config=config --nthreads {threads}
+"""
+
+log = "logs/cellrangerarc_mkref.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://quay.io/nf-core/cellranger-arc:2.0.2"
+
+[[rules]]
+name = "cellrangerarc_count"
+description = "cellranger-arc count: quantify GEX+ATAC multiome reads (per sample, 2-row lib.csv)"
+input = [
+    "raw/{sample}_gex_S1_L001_R1_001.fastq.gz",
+    "raw/{sample}_gex_S1_L001_R2_001.fastq.gz",
+    "raw/{sample}_atac_S1_L001_R1_001.fastq.gz",
+    "raw/{sample}_atac_S1_L001_R2_001.fastq.gz",
+    "raw/{sample}_atac_S1_L001_R3_001.fastq.gz",
+    "{config.cellrangerarc_reference}",
+]
+output = [
+    "results/{config.aligner}/count/{sample}/outs/filtered_feature_bc_matrix.h5",
+    "results/{config.aligner}/count/{sample}/outs/raw_feature_bc_matrix.h5",
+    "results/{config.aligner}/count/{sample}/outs/web_summary.html",
+]
+depends_on = ["cellrangerarc_mkref"]
+when = "config.aligner == 'cellrangerarc'"
+shell = """
+# upstream stages fastqs under fastqs/ and builds the lib.csv (sample = staged filename prefix)
+mkdir -p fastqs
+cp {input[0]} {input[1]} {input[2]} {input[3]} {input[4]} fastqs/
+fastq_folder=$(readlink -f fastqs)
+cat > {sample}_lib.csv <<EOF
+fastqs,sample,library_type
+$fastq_folder,{sample}_gex,Gene Expression
+$fastq_folder,{sample}_atac,Chromatin Accessibility
+EOF
+rm -rf {sample}
+if [ -n "{config.expected_cells}" ]; then EXPECT_CELLS="--expect-cells {config.expected_cells}"; else EXPECT_CELLS=""; fi
+# same LMEM auto-sizing as the cellranger rules (live jobmngr-hang safeguard)
+LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=1
+cellranger-arc count --id={sample} --libraries={sample}_lib.csv --reference={config.cellrangerarc_reference} --localcores {effective_threads} --localmem $LMEM $EXPECT_CELLS
+# publishDir-equivalent relocation of the outs/ tree (upstream publishes outdir/cellrangerarc/count/)
+mkdir -p results/{config.aligner}/count/{sample}/outs
+cp -r {sample}/outs/. results/{config.aligner}/count/{sample}/outs/
+"""
+
+log = "logs/cellrangerarc_count.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://quay.io/nf-core/cellranger-arc:2.0.2"
+
+# ---------------------------------------------------------------------------
+# MTX_TO_H5AD: convert raw/filtered matrices to h5ad (upstream MTX_TO_H5AD)
+# cellranger/arc share the cellranger template (read_10x_h5); the other aligners
+# have per-aligner rules + scripts below.
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "mtx_to_h5ad_raw"
-description = "Convert raw_feature_bc_matrix.h5 to h5ad (input_type=raw)"
-input = ["results/cellranger/count/{sample}/outs/raw_feature_bc_matrix.h5"]
-output = ["results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+description = "Convert raw_feature_bc_matrix.h5 to h5ad (cellranger / cellrangerarc, input_type=raw)"
+input = ["results/{config.aligner}/count/{sample}/outs/raw_feature_bc_matrix.h5"]
+output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+when = "config.aligner == 'cellranger' || config.aligner == 'cellrangerarc'"
 shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
 
+log = "logs/mtx_to_h5ad_raw.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -249,11 +746,98 @@ singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da220
 
 [[rules]]
 name = "mtx_to_h5ad_filtered"
-description = "Convert filtered_feature_bc_matrix.h5 to h5ad (input_type=filtered)"
-input = ["results/cellranger/count/{sample}/outs/filtered_feature_bc_matrix.h5"]
-output = ["results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+description = "Convert filtered_feature_bc_matrix.h5 to h5ad (cellranger / cellrangerarc, input_type=filtered)"
+input = ["results/{config.aligner}/count/{sample}/outs/filtered_feature_bc_matrix.h5"]
+output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+when = "config.aligner == 'cellranger' || config.aligner == 'cellrangerarc'"
 shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
 
+log = "logs/mtx_to_h5ad_filtered.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_simpleaf"
+description = "Convert simpleaf alevin quants.h5ad to h5ad (input_type=raw)"
+input = ["results/simpleaf/{sample}/simpleaf_quant/af_quant"]
+output = ["results/simpleaf/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+depends_on = ["simpleaf_quant"]
+when = "config.aligner == 'simpleaf'"
+shell = "python3 scripts/mtx_to_h5ad_simpleaf.py --input {input} --output {output} --sample {sample}"
+
+log = "logs/mtx_to_h5ad_simpleaf.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_kallisto_raw"
+description = "Convert kallisto counts_unfiltered mtx to h5ad (input_type=raw)"
+input = ["results/kallisto/{sample}.count/counts_unfiltered"]
+output = ["results/kallisto/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+depends_on = ["kallistobustools_count"]
+when = "config.aligner == 'kallisto'"
+shell = "T2G={config.txp2gene}; [ -n \"$T2G\" ] || T2G=refs/kallisto/t2g.txt; [ -f \"$T2G\" ] || { echo \"t2g file not found: $T2G\" >&2; exit 1; }; python3 scripts/mtx_to_h5ad_kallisto.py --input {input} --output {output} --sample {sample} --t2g \"$T2G\" --workflow {config.kb_workflow}"
+
+log = "logs/mtx_to_h5ad_kallisto_raw.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_kallisto_filtered"
+description = "Convert kallisto counts_filtered mtx to h5ad (input_type=filtered)"
+input = ["results/kallisto/{sample}.count/counts_filtered"]
+output = ["results/kallisto/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+depends_on = ["kallistobustools_count"]
+when = "config.aligner == 'kallisto' && config.protocol != 'smartseq' && config.protocol != 'dropseq'"
+shell = "T2G={config.txp2gene}; [ -n \"$T2G\" ] || T2G=refs/kallisto/t2g.txt; [ -f \"$T2G\" ] || { echo \"t2g file not found: $T2G\" >&2; exit 1; }; python3 scripts/mtx_to_h5ad_kallisto.py --input {input} --output {output} --sample {sample} --t2g \"$T2G\" --workflow {config.kb_workflow}"
+
+log = "logs/mtx_to_h5ad_kallisto_filtered.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_star_raw"
+description = "Convert STARsolo Gene/raw counts to h5ad (input_type=raw)"
+input = ["results/star/{sample}/{sample}.Solo.out/Gene/raw"]
+output = ["results/star/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+depends_on = ["star_align"]
+when = "config.aligner == 'star' && config.star_feature != 'Velocyto' && config.protocol != 'smartseq'"
+shell = "python3 scripts/mtx_to_h5ad_star.py --input {input} --output {output} --sample {sample}"
+
+log = "logs/mtx_to_h5ad_star_raw.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_star_filtered"
+description = "Convert STARsolo Gene/filtered counts to h5ad (input_type=filtered)"
+input = ["results/star/{sample}/{sample}.Solo.out/Gene/filtered"]
+output = ["results/star/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+depends_on = ["star_align"]
+when = "config.aligner == 'star' && config.star_feature != 'Velocyto' && config.protocol != 'smartseq' && config.protocol != 'dropseq'"
+shell = "python3 scripts/mtx_to_h5ad_star.py --input {input} --output {output} --sample {sample}"
+
+log = "logs/mtx_to_h5ad_star_filtered.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -263,16 +847,17 @@ singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da220
 
 # ---------------------------------------------------------------------------
 # CellBender background removal on the raw h5ad (upstream CELLBENDER_REMOVEBACKGROUND)
+# Upstream skips this whole subworkflow for cellrangerarc; the port mirrors that.
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "cellbender_removebackground"
 description = "CellBender remove-background on the raw matrix h5ad (CPU mode)"
-input = ["results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+input = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
 output = [
-    "results/cellranger/{sample}/cellbender_removebackground/{sample}_cell_barcodes.csv",
-    "results/cellranger/{sample}/cellbender_removebackground/{sample}_filtered.h5",
+    "results/{config.aligner}/{sample}/cellbender_removebackground/{sample}_cell_barcodes.csv",
+    "results/{config.aligner}/{sample}/cellbender_removebackground/{sample}_filtered.h5",
 ]
-when = "!config.skip_cellbender"
+when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
 shell = """
 # fresh-dir semantics: a previous run leaves ckpt.tar.gz in the workdir and
 # cellbender resumes it (same workflow hash) instead of training — the posterior
@@ -281,10 +866,11 @@ shell = """
 # checkpoints because Nextflow work dirs are fresh per run.
 rm -f ckpt.tar.gz
 TMPDIR=. cellbender remove-background --cpu-threads {threads} --estimator-multiple-cpu --input {input} --output {sample}.h5
-mkdir -p results/cellranger/{sample}/cellbender_removebackground
-mv {sample}.h5 {sample}_filtered.h5 {sample}_posterior.h5 {sample}_cell_barcodes.csv {sample}_metrics.csv {sample}.pdf {sample}.log results/cellranger/{sample}/cellbender_removebackground/
+mkdir -p results/{config.aligner}/{sample}/cellbender_removebackground
+mv {sample}.h5 {sample}_filtered.h5 {sample}_posterior.h5 {sample}_cell_barcodes.csv {sample}_metrics.csv {sample}.pdf {sample}.log results/{config.aligner}/{sample}/cellbender_removebackground/
 """
 
+log = "logs/cellbender_removebackground.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -299,13 +885,14 @@ singularity = "docker://community.wave.seqera.io/library/cellbender_webcolors:15
 name = "anndata_barcodes"
 description = "Filter raw h5ad to CellBender cell barcodes (input_type=cellbender_filter)"
 input = [
-    "results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad",
-    "results/cellranger/{sample}/cellbender_removebackground/{sample}_cell_barcodes.csv",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad",
+    "results/{config.aligner}/{sample}/cellbender_removebackground/{sample}_cell_barcodes.csv",
 ]
-output = ["results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad"]
-when = "!config.skip_cellbender"
+output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad"]
+when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
 shell = "python3 scripts/barcodes.py --h5ad {input[0]} --barcodes {input[1]} --output {output}"
 
+log = "logs/anndata_barcodes.log"
 [rules.resources]
 threads = 1
 memory = "6G"
@@ -315,17 +902,21 @@ singularity = "docker://community.wave.seqera.io/library/anndata_pandas_python_p
 
 # ---------------------------------------------------------------------------
 # H5AD_CONVERSION: concatenate per-sample h5ads per input_type (upstream CONCAT_H5AD)
+# Gating mirrors the upstream channels: simpleaf emits no filtered h5ads, and the
+# STARsolo/kallisto filtered dirs only exist for barcoded (10x) protocols.
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "concat_h5ad_filtered"
 description = "Concatenate per-sample filtered h5ads into a combined h5ad"
 input = []
 expand_inputs = [
-    { pattern = "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad", variables = { sample = "config.samples_list" } }
+    { pattern = "results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad", variables = { sample = "config.samples_list" } }
 ]
-output = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
+output = ["results/{config.aligner}/mtx_conversions/combined_filtered_matrix.h5ad"]
+when = "config.aligner != 'simpleaf' && config.protocol != 'smartseq' && !(config.aligner == 'star' && config.protocol == 'dropseq') && !(config.aligner == 'kallisto' && config.protocol == 'dropseq')"
 shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type filtered --output {output}"
 
+log = "logs/concat_h5ad_filtered.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -338,12 +929,13 @@ name = "concat_h5ad_cellbender_filter"
 description = "Concatenate per-sample CellBender-filtered h5ads into a combined h5ad"
 input = []
 expand_inputs = [
-    { pattern = "results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad", variables = { sample = "config.samples_list" } }
+    { pattern = "results/{config.aligner}/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad", variables = { sample = "config.samples_list" } }
 ]
-output = ["results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
-when = "!config.skip_cellbender"
+output = ["results/{config.aligner}/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
+when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
 shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type cellbender_filter --output {output}"
 
+log = "logs/concat_h5ad_cellbender_filter.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -353,15 +945,16 @@ singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da220
 
 [[rules]]
 name = "concat_h5ad_raw"
-description = "Concatenate per-sample raw h5ads into a combined h5ad (only when CellBender is skipped)"
+description = "Concatenate per-sample raw h5ads into a combined h5ad (CellBender skipped, or cellrangerarc)"
 input = []
 expand_inputs = [
-    { pattern = "results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad", variables = { sample = "config.samples_list" } }
+    { pattern = "results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad", variables = { sample = "config.samples_list" } }
 ]
-output = ["results/cellranger/mtx_conversions/combined_raw_matrix.h5ad"]
-when = "config.skip_cellbender"
+output = ["results/{config.aligner}/mtx_conversions/combined_raw_matrix.h5ad"]
+when = "config.skip_cellbender || config.aligner == 'cellrangerarc'"
 shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type raw --output {output}"
 
+log = "logs/concat_h5ad_raw.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -375,13 +968,15 @@ singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da220
 [[rules]]
 name = "anndatar_convert_filtered"
 description = "Convert per-sample filtered h5ad to Seurat and SingleCellExperiment RDS"
-input = ["results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+input = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/{sample}/{sample}_filtered_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.sce.rds",
 ]
+when = "config.aligner != 'simpleaf' && config.protocol != 'smartseq' && !(config.aligner == 'star' && config.protocol == 'dropseq') && !(config.aligner == 'kallisto' && config.protocol == 'dropseq')"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_filtered.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -392,14 +987,15 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 [[rules]]
 name = "anndatar_convert_cellbender_filter"
 description = "Convert per-sample CellBender-filtered h5ad to Seurat and SingleCellExperiment RDS"
-input = ["results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad"]
+input = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_cellbender_filter_matrix.sce.rds",
 ]
-when = "!config.skip_cellbender"
+when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_cellbender_filter.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -409,15 +1005,16 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 
 [[rules]]
 name = "anndatar_convert_raw"
-description = "Convert per-sample raw h5ad to Seurat and SingleCellExperiment RDS (only when CellBender is skipped)"
-input = ["results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+description = "Convert per-sample raw h5ad to Seurat and SingleCellExperiment RDS (CellBender skipped, or cellrangerarc)"
+input = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/{sample}/{sample}_raw_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.sce.rds",
 ]
-when = "config.skip_cellbender"
+when = "config.skip_cellbender || config.aligner == 'cellrangerarc'"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_raw.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -428,13 +1025,15 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 [[rules]]
 name = "anndatar_convert_combined_filtered"
 description = "Convert combined filtered h5ad to Seurat and SingleCellExperiment RDS"
-input = ["results/cellranger/mtx_conversions/combined_filtered_matrix.h5ad"]
+input = ["results/{config.aligner}/mtx_conversions/combined_filtered_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/combined_filtered_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/combined_filtered_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/combined_filtered_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/combined_filtered_matrix.sce.rds",
 ]
+when = "config.aligner != 'simpleaf' && config.protocol != 'smartseq' && !(config.aligner == 'star' && config.protocol == 'dropseq') && !(config.aligner == 'kallisto' && config.protocol == 'dropseq')"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_combined_filtered.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -445,14 +1044,15 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 [[rules]]
 name = "anndatar_convert_combined_cellbender_filter"
 description = "Convert combined CellBender-filtered h5ad to Seurat and SingleCellExperiment RDS"
-input = ["results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
+input = ["results/{config.aligner}/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/combined_cellbender_filter_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/combined_cellbender_filter_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/combined_cellbender_filter_matrix.sce.rds",
 ]
-when = "!config.skip_cellbender"
+when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_combined_cellbender_filter.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -462,15 +1062,16 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 
 [[rules]]
 name = "anndatar_convert_combined_raw"
-description = "Convert combined raw h5ad to Seurat and SingleCellExperiment RDS (only when CellBender is skipped)"
-input = ["results/cellranger/mtx_conversions/combined_raw_matrix.h5ad"]
+description = "Convert combined raw h5ad to Seurat and SingleCellExperiment RDS (CellBender skipped, or cellrangerarc)"
+input = ["results/{config.aligner}/mtx_conversions/combined_raw_matrix.h5ad"]
 output = [
-    "results/cellranger/mtx_conversions/combined_raw_matrix.seurat.rds",
-    "results/cellranger/mtx_conversions/combined_raw_matrix.sce.rds",
+    "results/{config.aligner}/mtx_conversions/combined_raw_matrix.seurat.rds",
+    "results/{config.aligner}/mtx_conversions/combined_raw_matrix.sce.rds",
 ]
-when = "config.skip_cellbender"
+when = "config.skip_cellbender || config.aligner == 'cellrangerarc'"
 shell = "Rscript scripts/anndatar_convert.R --input={input} --output-seurat={output[0]} --output-sce={output[1]}"
 
+log = "logs/anndatar_convert_combined_raw.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -480,6 +1081,8 @@ singularity = "docker://community.wave.seqera.io/library/bioconductor-anndatar_b
 
 # ---------------------------------------------------------------------------
 # Collated software versions (upstream softwareVersionsToYAML + collectFile)
+# The aligner-specific blocks are emitted only for the active aligner, like the
+# upstream channel topic (which collates only the tools that actually ran).
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "collect_versions"
@@ -497,23 +1100,11 @@ cat > results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
   gunzip: 1.13
 "GTF_GENE_FILTER":
   python: 3.9
-"CELLRANGER_MKGTF":
-  cellranger: 10.0.0
-"CELLRANGER_MKREF":
-  cellranger: 10.0.0
-"CELLRANGER_COUNT":
-  cellranger: 10.0.0
 "MTX_TO_H5AD":
   python: 3.12
   scanpy: 1.10.2
   pandas: 2.3.0
   anndata: 0.11.4
-"CELLBENDER_REMOVEBACKGROUND":
-  cellbender: 0.3.2
-"ANNDATA_BARCODES":
-  python: 3.12
-  anndata: 0.11.4
-  pandas: 2.3.0
 "CONCAT_H5AD":
   scanpy: 1.10.2
 "ANNDATAR_CONVERT":
@@ -523,34 +1114,205 @@ cat > results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
 "MULTIQC":
   multiqc: 1.34
 EOF
+case "{config.aligner}" in
+    cellranger)
+        cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"CELLRANGER_MKGTF":
+  cellranger: 10.0.0
+"CELLRANGER_MKREF":
+  cellranger: 10.0.0
+"CELLRANGER_COUNT":
+  cellranger: 10.0.0
+EOF
+        ;;
+    cellrangerarc)
+        cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"CELLRANGERARC_MKGTF":
+  cellrangerarc: 2.0.2
+"CELLRANGERARC_MKREF":
+  cellrangerarc: 2.0.2
+"CELLRANGERARC_COUNT":
+  cellrangerarc: 2.0.2
+EOF
+        ;;
+    simpleaf)
+        cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"SIMPLEAF_INDEX":
+  alevin-fry: 0.11.2
+  piscem: 0.12.2
+  salmon: 1.10.3
+  simpleaf: 0.19.5
+"SIMPLEAF_QUANT":
+  alevin-fry: 0.11.2
+  piscem: 0.12.2
+  salmon: 1.10.3
+  simpleaf: 0.19.5
+"QCATCH":
+  qcatch: 0.2.12
+EOF
+        ;;
+    kallisto)
+        cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"KALLISTOBUSTOOLS_REF":
+  kallistobustools: 0.28.2
+"KALLISTOBUSTOOLS_COUNT":
+  kallistobustools: 0.28.2
+EOF
+        ;;
+    star)
+        cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"STAR_GENOMEGENERATE":
+  star: 2.7.11b
+  samtools: 1.21
+  gawk: 5.1.0
+"STAR_GENOMEPARAMS_UPGRADE":
+  gawk: 5.3.1
+"STAR_ALIGN":
+  star: 2.7.10b
+EOF
+        ;;
+esac
+if [ "{config.skip_cellbender}" != "true" ] && [ "{config.aligner}" != "cellrangerarc" ]; then
+    cat >> results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml <<'EOF'
+"CELLBENDER_REMOVEBACKGROUND":
+  cellbender: 0.3.2
+"ANNDATA_BARCODES":
+  python: 3.12
+  anndata: 0.11.4
+  pandas: 2.3.0
+EOF
+fi
 """
+
+log = "logs/collect_versions.log"
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
+
+# ---------------------------------------------------------------------------
+# Reporting inputs for MultiQC (upstream paramsSummaryMultiqc + methodsDescriptionText)
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "workflow_summary"
+description = "Write the workflow-summary YAML consumed by MultiQC (upstream paramsSummaryMultiqc)"
+input = []
+output = ["results/pipeline_info/workflow_summary_mqc.yaml"]
+shell = """
+mkdir -p results/pipeline_info
+cat > results/pipeline_info/workflow_summary_mqc.yaml <<'EOF'
+id: "nf-core-scrnaseq-summary"
+description: " - this information is collected when the pipeline is started."
+section_name: "nf-core/scrnaseq Workflow Summary"
+section_href: "https://github.com/nf-core/scrnaseq"
+plot_type: "html"
+data: |
+    <dl class="dl-horizontal">
+        <dt>nf-core/scrnaseq</dt><dd><em>v4.2.0</em></dd>
+        <dt>oxo-flow-scrnaseq port</dt><dd><em>v1.0.0</em></dd>
+        <dt>Aligner</dt><dd><code>{config.aligner}</code></dd>
+        <dt>Protocol</dt><dd><code>{config.protocol}</code></dd>
+        <dt>Expected cells</dt><dd><code>{config.expected_cells}</code></dd>
+        <dt>Save aligner intermediate files</dt><dd><code>{config.save_align_intermeds}</code></dd>
+        <dt>Skip FastQC</dt><dd><code>{config.skip_fastqc}</code></dd>
+        <dt>Skip CellBender</dt><dd><code>{config.skip_cellbender}</code></dd>
+        <dt>Skip QCatch</dt><dd><code>{config.skip_qcatch}</code></dd>
+        <dt>Skip MultiQC</dt><dd><code>{config.skip_multiqc}</code></dd>
+        <dt>Samplesheet</dt><dd><code>{config.samplesheet}</code></dd>
+        <dt>FASTA</dt><dd><code>{config.fasta}</code></dd>
+        <dt>GTF</dt><dd><code>{config.gtf}</code></dd>
+        <dt>Barcode whitelist</dt><dd><code>{config.whitelist}</code></dd>
+        <dt>kb workflow</dt><dd><code>{config.kb_workflow}</code></dd>
+        <dt>STAR features</dt><dd><code>{config.star_feature}</code></dd>
+        <dt>simpleaf UMI resolution</dt><dd><code>{config.simpleaf_umi_resolution}</code></dd>
+        <dt>Remove doublets (QCatch)</dt><dd><code>{config.remove_doublets}</code></dd>
+        <dt>MultiQC title</dt><dd><code>{config.multiqc_title}</code></dd>
+    </dl>
+EOF
+"""
+
+log = "logs/workflow_summary.log"
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
+
+[[rules]]
+name = "methods_description"
+description = "Render the methods-description YAML consumed by MultiQC (upstream methodsDescriptionText)"
+input = ["assets/methods_description_template.yml"]
+output = ["results/pipeline_info/methods_description_mqc.yaml"]
+shell = """
+mkdir -p results/pipeline_info
+# upstream methodsDescriptionText fills the ${...} placeholders of the template
+# (braces are built via chr() so the engine's wildcard scanner never sees them)
+python3 - <<'PYEOF'
+import pathlib
+
+b = chr(123)
+e = chr(125)
+
+def ph(name):
+    return "$" + b + name + e
+
+template = pathlib.Path("{input}").read_text()
+subs = [
+    (ph("workflow.manifest.version"), "1.0.0"),
+    ("Nextflow v" + ph("workflow.nextflow.version"), "oxo-flow v0.15.0"),
+    (ph("workflow.commandLine"), "oxo-flow run main.oxoflow"),
+    (ph("doi_text"), " "),
+    (ph("tool_citations"), "Tools used in the workflow included: FastQC (Andrews 2010), Cell Ranger (Zheng et al. 2017), STAR (Dobin et al. 2013), simpleaf, alevin-fry (He et al. 2024), kallisto|bustools (Bray et al. 2016; Melsted et al. 2021), CellBender (Fleming et al. 2023), scanpy (Wolf et al. 2018), MultiQC (Ewels et al. 2016)."),
+    (ph("tool_bibliography"), ""),
+    (ph("nodoi_text"), ""),
+]
+for key, value in subs:
+    template = template.replace(key, value)
+pathlib.Path("{output}").write_text(template)
+PYEOF
+"""
+
+log = "logs/methods_description.log"
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
 
 # ---------------------------------------------------------------------------
 # MULTIQC: aggregate report (upstream MULTIQC)
+# The union of per-aligner expand_inputs patterns: only the active aligner's
+# files exist, mirroring the upstream ch_multiqc_files channel mixing.
 # ---------------------------------------------------------------------------
 [[rules]]
 name = "multiqc"
-description = "MultiQC aggregation of FastQC, Cell Ranger web summaries and collated versions"
+description = "MultiQC aggregation of FastQC, aligner web summaries/logs and collated versions"
 input = []
 expand_inputs = [
     { pattern = "results/fastqc/{sample}_1_fastqc.html", variables = { sample = "config.samples_list" } },
     { pattern = "results/fastqc/{sample}_1_fastqc.zip", variables = { sample = "config.samples_list" } },
     { pattern = "results/fastqc/{sample}_2_fastqc.html", variables = { sample = "config.samples_list" } },
     { pattern = "results/fastqc/{sample}_2_fastqc.zip", variables = { sample = "config.samples_list" } },
-    { pattern = "results/cellranger/count/{sample}/outs/web_summary.html", variables = { sample = "config.samples_list" } },
+    { pattern = "results/{config.aligner}/count/{sample}/outs/web_summary.html", variables = { sample = "config.samples_list" } },
+    { pattern = "results/simpleaf/{sample}/simpleaf_quant/af_quant/alevin/quants.h5ad", variables = { sample = "config.samples_list" } },
+    { pattern = "results/star/{sample}/{sample}.Log.final.out", variables = { sample = "config.samples_list" } },
 ]
 output = ["results/multiqc/multiqc_report.html", "results/multiqc/multiqc_data"]
-depends_on = ["collect_versions"]
+depends_on = ["collect_versions", "workflow_summary", "methods_description", "cellranger_count", "cellrangerarc_count", "simpleaf_quant", "star_align"]
 when = "!config.skip_multiqc"
 shell = """
 # stage inputs flat like the nf-core MULTIQC module (stageAs '?/*')
 for f in {input}; do
     [ -e "$f" ] && cp -r "$f" .
 done
-cp results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml .
+cp results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml results/pipeline_info/workflow_summary_mqc.yaml results/pipeline_info/methods_description_mqc.yaml .
 # upstream ext.args: --title when multiqc_title is set
 if [ -n "{config.multiqc_title}" ]; then TITLE_ARG="--title {config.multiqc_title}"; else TITLE_ARG=""; fi
-multiqc --force ${TITLE_ARG} --config {config.multiqc_config} .
+multiqc --force $TITLE_ARG --config {config.multiqc_config} .
 # fresh-dir semantics: a resumed run keeps the previous results/ tree
 # and mv refuses to merge into a non-empty dir (live: "cannot overwrite
 # 'results/multiqc/multiqc_data': Directory not empty")
@@ -559,6 +1321,7 @@ mkdir -p results/multiqc
 mv multiqc_report.html multiqc_data results/multiqc/
 """
 
+log = "logs/multiqc.log"
 [rules.resources]
 threads = 1
 memory = "6G"
