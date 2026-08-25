@@ -32,7 +32,15 @@ The helper scripts in scripts/ are ports of files distributed with
 nf-core/scrnaseq (MIT license, The nf-core/scrnaseq team):
   - filter_gtf_for_genes_in_genome.py  (bin/, from nf-core/rnaseq)
   - mtx_to_h5ad_cellranger.py          (modules/local/mtx_to_h5ad/templates/)
+  - mtx_to_h5ad_simpleaf.py            (modules/local/mtx_to_h5ad/templates/)
+  - mtx_to_h5ad_kallisto.py            (modules/local/mtx_to_h5ad/templates/)
+  - mtx_to_h5ad_star.py                (modules/local/mtx_to_h5ad/templates/)
   - barcodes.py                        (modules/nf-core/anndata/barcodes/templates/)
   - concat_h5ad.py                     (modules/local/concat_h5ad/templates/)
   - anndatar_convert.R                 (modules/local/anndatar_convert/templates/)
+
+The following assets are copied verbatim from upstream nf-core/scrnaseq
+(MIT license, The nf-core/scrnaseq team):
+  - assets/whitelist/10x_V{1..4}_barcode_whitelist.txt.gz  (assets/whitelist/)
+  - assets/methods_description_template.yml                 (assets/)
 ---------------------------------------------------------------------
