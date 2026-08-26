@@ -60,10 +60,10 @@ qcatch_n_partitions = ""    # qcatch --n_partitions when set (for protocols with
 transcript_fasta = ""       # transcript FASTA for simpleaf index building (mutually exclusive with fasta/gtf)
 txp2gene = ""               # t2g map (required with transcript_fasta; also used as the kallisto t2g)
 
-# barcode whitelist for simpleaf/star (upstream maps it automatically per
-# protocol in assets/protocols.json; the port uses one explicit path — set it
-# per protocol: 10x_V1..V4_barcode_whitelist.txt.gz under assets/whitelist/)
-whitelist = "assets/whitelist/10x_V3_barcode_whitelist.txt.gz"
+# barcode whitelist for simpleaf/star. Empty = mapped per protocol from
+# assets/whitelist/10x_V{1..4}_barcode_whitelist.txt.gz (upstream
+# protocols.json behavior); set a path to override.
+whitelist = ""
 
 # kallisto/bustools
 kallisto_index = ""         # pre-built kb_ref_out.idx; empty = build from refs
