@@ -946,7 +946,7 @@ expand_inputs = [
 ]
 output = ["results/{config.aligner}/mtx_conversions/combined_filtered_matrix.h5ad"]
 when = "config.aligner != 'simpleaf' && config.protocol != 'smartseq' && !(config.aligner == 'star' && config.protocol == 'dropseq') && !(config.aligner == 'kallisto' && config.protocol == 'dropseq')"
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type filtered --output {output}"
+shell = "python3 scripts/concat_h5ad.py --inputs {input} --samplesheet {config.samplesheet} --input-type filtered --output {output}"
 
 log = "logs/concat_h5ad_filtered.log"
 [rules.resources]
@@ -965,7 +965,7 @@ expand_inputs = [
 ]
 output = ["results/{config.aligner}/mtx_conversions/combined_cellbender_filter_matrix.h5ad"]
 when = "!config.skip_cellbender && config.aligner != 'cellrangerarc'"
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type cellbender_filter --output {output}"
+shell = "python3 scripts/concat_h5ad.py --inputs {input} --samplesheet {config.samplesheet} --input-type cellbender_filter --output {output}"
 
 log = "logs/concat_h5ad_cellbender_filter.log"
 [rules.resources]
@@ -984,7 +984,7 @@ expand_inputs = [
 ]
 output = ["results/{config.aligner}/mtx_conversions/combined_raw_matrix.h5ad"]
 when = "config.skip_cellbender || config.aligner == 'cellrangerarc'"
-shell = "python3 scripts/concat_h5ad.py --samplesheet {config.samplesheet} --input-type raw --output {output}"
+shell = "python3 scripts/concat_h5ad.py --inputs {input} --samplesheet {config.samplesheet} --input-type raw --output {output}"
 
 log = "logs/concat_h5ad_raw.log"
 [rules.resources]
