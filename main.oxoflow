@@ -623,6 +623,12 @@ WL=""
 if [ -n "$WLF" ]; then
     if [[ "$WLF" == *.gz ]]; then gzip -cdf "$WLF" > whitelist.uncompressed.txt; else cp "$WLF" whitelist.uncompressed.txt; fi
     WL="--soloCBwhitelist whitelist.uncompressed.txt"
+else
+    # CB_UMI_Simple requires a whitelist argument — the literal "None"
+    # demultiplexes without one (dropseq/smartseq, upstream has no
+    # whitelist for these; live: STARsolo aborted with "--soloCBwhitelist
+    # is not defined").
+    WL="--soloCBwhitelist None"
 fi
 if [ -n "{config.expected_cells}" ]; then CELL_FILTER="--soloCellFilter CellRanger2.2 {config.expected_cells} 0.99 10"; else CELL_FILTER=""; fi
 if [ "{config.star_ignore_sjdbgtf}" = "true" ]; then IGNORE_GTF=""; else IGNORE_GTF="--sjdbGTFfile {config.gtf_filtered}"; fi
