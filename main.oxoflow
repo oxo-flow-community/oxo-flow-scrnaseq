@@ -361,6 +361,8 @@ simpleaf set-paths
 # run simpleaf quant (cell filtering: upstream hardcodes 'unfiltered-pl' -> input_type is always raw)
 simpleaf quant $T2G --chemistry $CHEM --index $IDX --reads1 raw/{sample}_R1.fastq.gz --reads2 raw/{sample}_R2.fastq.gz --resolution {config.simpleaf_umi_resolution} --output simpleaf_quant --threads {effective_threads} --anndata-out $PL
 mkdir -p results/simpleaf/{sample}
+# the engine pre-creates the declared output parent — mv would nest inside it
+rm -rf results/simpleaf/{sample}/simpleaf_quant
 mv simpleaf_quant results/simpleaf/{sample}/simpleaf_quant
 """
 
@@ -482,6 +484,8 @@ C1=""; C2=""
 # upstream ext.args: --workflow <kb_workflow> --filter; -m = memory.toGiga() - 1
 kb count -t {effective_threads} -i $IDX -g $T2G $C1 $C2 -x $TECH --workflow {config.kb_workflow} --filter -o {sample}.count -m $(( {effective_memory_mb} / 1024 - 1 ))G raw/{sample}_R1.fastq.gz raw/{sample}_R2.fastq.gz
 mkdir -p results/kallisto
+# the engine pre-creates the declared output parent — mv would nest inside it
+rm -rf results/kallisto/{sample}.count
 mv {sample}.count results/kallisto/{sample}.count
 """
 
@@ -506,6 +510,7 @@ shell = """
 samtools faidx {config.fasta_prepared}
 NUM_BASES=`gawk '{sum = sum + $2}END{if ((log(sum)/log(2))/2 - 1 > 14) {printf "%d", 14} else {printf "%d", int((log(sum)/log(2))/2 - 1)}}' {config.fasta_prepared}.fai`
 mkdir -p refs/star_index
+rm -rf refs/star_index/star  # engine pre-creates the output parent; mv would nest
 STAR --runMode genomeGenerate --genomeDir star/ --genomeFastaFiles {config.fasta_prepared} --sjdbGTFfile {config.gtf_filtered} --runThreadN {effective_threads} --genomeSAindexNbases $NUM_BASES --limitGenomeGenerateRAM $(( {effective_memory_mb} * 1024 * 1024 - 100000000 ))
 mv star refs/star_index/star
 """
