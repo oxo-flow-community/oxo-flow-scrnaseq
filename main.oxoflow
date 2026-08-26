@@ -302,7 +302,7 @@ ulimit -n 2048
 # prep simpleaf
 simpleaf set-paths
 # run simpleaf index
-simpleaf index --threads {threads} $SEQ_ARGS -o refs/simpleaf_index
+simpleaf index --threads {effective_threads} $SEQ_ARGS -o refs/simpleaf_index
 """
 
 log = "logs/simpleaf_index.log"
@@ -359,7 +359,7 @@ export ALEVIN_FRY_HOME=.
 # prep simpleaf
 simpleaf set-paths
 # run simpleaf quant (cell filtering: upstream hardcodes 'unfiltered-pl' -> input_type is always raw)
-simpleaf quant $T2G --chemistry $CHEM --index $IDX --reads1 raw/{sample}_R1.fastq.gz --reads2 raw/{sample}_R2.fastq.gz --resolution {config.simpleaf_umi_resolution} --output simpleaf_quant --threads {threads} --anndata-out $PL
+simpleaf quant $T2G --chemistry $CHEM --index $IDX --reads1 raw/{sample}_R1.fastq.gz --reads2 raw/{sample}_R2.fastq.gz --resolution {config.simpleaf_umi_resolution} --output simpleaf_quant --threads {effective_threads} --anndata-out $PL
 mkdir -p results/simpleaf/{sample}
 mv simpleaf_quant results/simpleaf/{sample}/simpleaf_quant
 """
@@ -480,7 +480,7 @@ C1=""; C2=""
 [ -z "$C1" ] && [ -f refs/kallisto/cdna_t2c.txt ] && C1="-c1 refs/kallisto/cdna_t2c.txt"
 [ -z "$C2" ] && [ -f refs/kallisto/intron_t2c.txt ] && C2="-c2 refs/kallisto/intron_t2c.txt"
 # upstream ext.args: --workflow <kb_workflow> --filter; -m = memory.toGiga() - 1
-kb count -t {threads} -i $IDX -g $T2G $C1 $C2 -x $TECH --workflow {config.kb_workflow} --filter -o {sample}.count -m $(( {effective_memory_mb} / 1024 - 1 ))G raw/{sample}_R1.fastq.gz raw/{sample}_R2.fastq.gz
+kb count -t {effective_threads} -i $IDX -g $T2G $C1 $C2 -x $TECH --workflow {config.kb_workflow} --filter -o {sample}.count -m $(( {effective_memory_mb} / 1024 - 1 ))G raw/{sample}_R1.fastq.gz raw/{sample}_R2.fastq.gz
 mkdir -p results/kallisto
 mv {sample}.count results/kallisto/{sample}.count
 """
@@ -506,7 +506,7 @@ shell = """
 samtools faidx {config.fasta_prepared}
 NUM_BASES=`gawk '{sum = sum + $2}END{if ((log(sum)/log(2))/2 - 1 > 14) {printf "%d", 14} else {printf "%d", int((log(sum)/log(2))/2 - 1)}}' {config.fasta_prepared}.fai`
 mkdir -p refs/star_index
-STAR --runMode genomeGenerate --genomeDir star/ --genomeFastaFiles {config.fasta_prepared} --sjdbGTFfile {config.gtf_filtered} --runThreadN {threads} --genomeSAindexNbases $NUM_BASES --limitGenomeGenerateRAM $(( {effective_memory_mb} * 1024 * 1024 - 100000000 ))
+STAR --runMode genomeGenerate --genomeDir star/ --genomeFastaFiles {config.fasta_prepared} --sjdbGTFfile {config.gtf_filtered} --runThreadN {effective_threads} --genomeSAindexNbases $NUM_BASES --limitGenomeGenerateRAM $(( {effective_memory_mb} * 1024 * 1024 - 100000000 ))
 mv star refs/star_index/star
 """
 
@@ -624,7 +624,7 @@ if [ "{config.star_ignore_sjdbgtf}" = "true" ]; then IGNORE_GTF=""; else IGNORE_
 if [ -n "{config.seq_center}" ]; then RG_LINE="--outSAMattrRGline ID:{sample} 'CN:{config.seq_center}' 'SM:{sample}'"; else RG_LINE="--outSAMattrRGline ID:{sample} 'SM:{sample}'"; fi
 # upstream ext.args: --readFilesCommand zcat --runDirPerm All_RWX --outWigType bedGraph --twopassMode Basic
 # --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM <memory>; reads passed REVERSE first
-STAR --genomeDir $INDEX --readFilesIn raw/{sample}_R2.fastq.gz raw/{sample}_R1.fastq.gz --runThreadN {threads} --outFileNamePrefix {sample}. --readFilesCommand zcat --runDirPerm All_RWX --outWigType bedGraph --twopassMode Basic --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM $(( {effective_memory_mb} * 1024 * 1024 )) $WL --soloType $SOLO --soloFeatures {config.star_feature} $UMI_LEN $CELL_FILTER $IGNORE_GTF $RG_LINE
+STAR --genomeDir $INDEX --readFilesIn raw/{sample}_R2.fastq.gz raw/{sample}_R1.fastq.gz --runThreadN {effective_threads} --outFileNamePrefix {sample}. --readFilesCommand zcat --runDirPerm All_RWX --outWigType bedGraph --twopassMode Basic --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM $(( {effective_memory_mb} * 1024 * 1024 )) $WL --soloType $SOLO --soloFeatures {config.star_feature} $UMI_LEN $CELL_FILTER $IGNORE_GTF $RG_LINE
 mkdir -p results/star/{sample}
 mv {sample}.Solo.out {sample}.Log.final.out {sample}.Log.out {sample}.Log.progress.out results/star/{sample}/
 if [ -f {sample}.Aligned.sortedByCoord.out.bam ]; then
