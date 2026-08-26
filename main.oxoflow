@@ -340,8 +340,20 @@ fi
 # message when the index is absent (the engine cannot know a prebuilt path)
 if [ -n "{config.simpleaf_index}" ]; then IDX={config.simpleaf_index}; else IDX=refs/simpleaf_index/index; fi
 [ -d "$IDX" ] || { echo "simpleaf index not found: $IDX (set --arg simpleaf_index=... or let simpleaf_index build it)" >&2; exit 1; }
-# upstream passes a whitelist per protocol (assets/protocols.json); none for dropseq
-if [ -n "{config.whitelist}" ]; then PL="--unfiltered-pl {config.whitelist}"; else PL=""; fi
+# upstream picks the whitelist per protocol (assets/protocols.json); the
+# config key is the override. simpleaf quant REQUIRES a cell-filtering arg
+# (live: an empty PL left --anndata-out bare and clap aborted).
+if [ -n "{config.whitelist}" ]; then WLF="{config.whitelist}"
+else
+    case "{config.protocol}" in
+        10XV1) WLF="assets/whitelist/10x_V1_barcode_whitelist.txt.gz" ;;
+        10XV2) WLF="assets/whitelist/10x_V2_barcode_whitelist.txt.gz" ;;
+        10XV3) WLF="assets/whitelist/10x_V3_barcode_whitelist.txt.gz" ;;
+        10XV4) WLF="assets/whitelist/10x_V4_barcode_whitelist.txt.gz" ;;
+        *) WLF="" ;;
+    esac
+fi
+if [ -n "$WLF" ]; then PL="--unfiltered-pl $WLF"; else PL="--unfiltered-pl"; fi
 # export required var
 export ALEVIN_FRY_HOME=.
 # prep simpleaf
@@ -558,7 +570,10 @@ input = [
     "raw/{sample}_R1.fastq.gz",
     "raw/{sample}_R2.fastq.gz",
     "{config.gtf_filtered}",
-    "{config.whitelist}",
+    "assets/whitelist/10x_V1_barcode_whitelist.txt.gz",
+    "assets/whitelist/10x_V2_barcode_whitelist.txt.gz",
+    "assets/whitelist/10x_V3_barcode_whitelist.txt.gz",
+    "assets/whitelist/10x_V4_barcode_whitelist.txt.gz",
     "{config.star_index}",
 ]
 output = [
@@ -586,10 +601,22 @@ elif [ -n "{config.star_index}" ]; then INDEX={config.star_index}
 else INDEX=refs/star_index/star
 fi
 [ -d "$INDEX" ] || { echo "STAR index not found: $INDEX (set --arg star_index=... or let star_genomegenerate build it)" >&2; exit 1; }
-# upstream passes --soloCBwhitelist whenever a whitelist is in the channel
+# upstream picks the whitelist per protocol (assets/protocols.json); the
+# config key is the override. Live: a hardcoded V3 whitelist against
+# 10XV2 reads silently filtered every cell out.
+if [ -n "{config.whitelist}" ]; then WLF="{config.whitelist}"
+else
+    case "{config.protocol}" in
+        10XV1) WLF="assets/whitelist/10x_V1_barcode_whitelist.txt.gz" ;;
+        10XV2) WLF="assets/whitelist/10x_V2_barcode_whitelist.txt.gz" ;;
+        10XV3) WLF="assets/whitelist/10x_V3_barcode_whitelist.txt.gz" ;;
+        10XV4) WLF="assets/whitelist/10x_V4_barcode_whitelist.txt.gz" ;;
+        *) WLF="" ;;
+    esac
+fi
 WL=""
-if [ -n "{config.whitelist}" ]; then
-    if [[ "{config.whitelist}" == *.gz ]]; then gzip -cdf "{config.whitelist}" > whitelist.uncompressed.txt; else cp "{config.whitelist}" whitelist.uncompressed.txt; fi
+if [ -n "$WLF" ]; then
+    if [[ "$WLF" == *.gz ]]; then gzip -cdf "$WLF" > whitelist.uncompressed.txt; else cp "$WLF" whitelist.uncompressed.txt; fi
     WL="--soloCBwhitelist whitelist.uncompressed.txt"
 fi
 if [ -n "{config.expected_cells}" ]; then CELL_FILTER="--soloCellFilter CellRanger2.2 {config.expected_cells} 0.99 10"; else CELL_FILTER=""; fi
