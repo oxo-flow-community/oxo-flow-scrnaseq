@@ -492,7 +492,7 @@ output = ["refs/star_index/star/Genome"]
 when = "config.aligner == 'star' && config.star_index == ''"
 shell = """
 samtools faidx {config.fasta_prepared}
-NUM_BASES=`gawk '{sum = sum + $2}END{if ((log(sum)/log(2))/2 - 1 > 14) {printf "%.0f", 14} else {printf "%.0f", (log(sum)/log(2))/2 - 1}}' {config.fasta_prepared}.fai`
+NUM_BASES=`gawk '{sum = sum + $2}END{if ((log(sum)/log(2))/2 - 1 > 14) {printf "%d", 14} else {printf "%d", int((log(sum)/log(2))/2 - 1)}}' {config.fasta_prepared}.fai`
 mkdir -p refs/star_index
 STAR --runMode genomeGenerate --genomeDir star/ --genomeFastaFiles {config.fasta_prepared} --sjdbGTFfile {config.gtf_filtered} --runThreadN {threads} --genomeSAindexNbases $NUM_BASES --limitGenomeGenerateRAM $(( {effective_memory_mb} * 1024 * 1024 - 100000000 ))
 mv star refs/star_index/star
