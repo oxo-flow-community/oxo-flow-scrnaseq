@@ -41,9 +41,10 @@ MIN_CELL_READS = 50
 MAX_CELL_READS = 2000
 SEED = 5
 
-# gene intervals in refdata.fa coordinates (1-based, inclusive) — keep in
-# sync with refs/refdata_genes.gtf exons: (100-500), (800-1300), (1500-1900)
-EXONS = [(100, 500), (800, 1300), (1500, 1900)]
+# gene exon intervals in refdata.fa coordinates (1-based, inclusive) — keep
+# in sync with refs/refdata_genes.gtf: two exons per gene (grangers needs
+# introns; single-exon transcripts crashed simpleaf's polars layer, live)
+EXONS = [(100, 300), (400, 600), (800, 1000), (1100, 1300), (1500, 1700), (1800, 2000)]
 R2_LEN = 75
 
 
