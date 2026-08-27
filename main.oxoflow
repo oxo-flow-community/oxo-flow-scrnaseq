@@ -5,8 +5,17 @@
 [workflow]
 name = "oxo-flow-scrnaseq"
 version = "1.0.0"
-description = "Single-cell RNA-seq pipeline: FastQC, alignment/quantification (cellranger | cellrangerarc | simpleaf | kallisto | star), h5ad conversion, CellBender background removal, MultiQC (port of nf-core/scrnaseq 4.2.0)"
+description = "Single-cell RNA-seq pipeline: FastQC, alignment/quantification (cellranger | cellrangerarc | cellrangermulti | simpleaf | kallisto | star), h5ad conversion, CellBender background removal, MultiQC (port of nf-core/scrnaseq 4.2.0)"
 author = "oxo-flow-community"
+
+# Per-sample metadata table consumed by the cellranger_multi branch (engine
+# >= 0.17.0 metadata binding, issue #227): the <modality>_fastq_1/_fastq_2
+# columns carry each sample's optional-modality FASTQ pairs (vdj/ab/beam/
+# crispr/cmo). GEX always comes from raw/<sample>_R{1,2}.fastq.gz like every
+# other aligner branch, so the table has no GEX columns. An empty cell =
+# the modality is absent for that sample ({meta.<col>} renders ''). The
+# shipped file is a lookup-only stub; edit it when enabling cellranger_multi.
+metadata_file = "refs/cellranger_multi_metadata.tsv"
 
 # nf-core PIPELINE_COMPLETION port: workflow-level terminal notification
 # hooks. on_complete fires once after a run with no failed rule, on_error
@@ -103,6 +112,22 @@ gtf_source_fixed = "refs/refdata_genes.source_fixed.gtf"
 # cellranger reference: build from fasta/gtf, or point transcriptome at an existing index
 build_cellranger_index = true
 transcriptome = "refs/cellranger_reference"
+
+# cellranger multi (upstream aligner = cellrangermulti): the multiome
+# VDJ / Ab-seq / CRO branch. OFF by default. Enabling it supersedes
+# cellranger_count (upstream's aligner branches are exclusive). Per-sample
+# per-modality FASTQs come from the [workflow] metadata_file table
+# (refs/cellranger_multi_metadata.tsv): one pair per modality per sample in
+# columns <modality>_fastq_1/<modality>_fastq_2 for vdj/ab/beam/crispr/cmo;
+# an empty cell = modality absent for that sample — the engine renders
+# {meta.<col>} as '', the port's equivalent of upstream's EMPTY-file
+# injection (the exclusion is closed without an engine follow-up).
+cellranger_multi = false
+cellranger_multi_gex_reference = ""   # upstream --cellranger_index; empty = the built {config.transcriptome}
+cellranger_multi_vdj_reference = ""   # upstream --cellranger_vdj_index; empty = built by cellranger_mkvdjref
+skip_cellrangermulti_vdjref = false   # upstream same name: skip the VDJ reference build
+cellranger_multi_fb_reference = ""    # upstream --fb_reference: feature-barcoding reference (antibody/CRISPR)
+cellranger_multi_barcodes = ""        # upstream --cellranger_multi_barcodes: barcode table (sample,multiplexed_sample_id,description[,cmo_ids])
 
 # cellrangerarc reference (multiome ATAC+GEX)
 cellrangerarc_reference = "refs/cellrangerarc_reference"
@@ -318,7 +343,9 @@ output = [
     "results/{config.aligner}/count/{sample}/outs/web_summary.html",
 ]
 depends_on = ["cellranger_mkref"]
-when = "config.aligner == 'cellranger'"
+# cellranger_multi supersedes count (upstream aligner branches are exclusive:
+# aligner=cellrangermulti never runs CELLRANGER_COUNT)
+when = "config.aligner == 'cellranger' && !config.cellranger_multi"
 shell = """
 # nf-core CELLRANGER_COUNT template: stage reads under Cell Ranger naming, then run count
 # (one fastq pair per sample; the module renames pairs to <sample>_S1_L<i:03d>_R1/R2_001.fastq.gz)
@@ -338,6 +365,200 @@ cp -r {sample}/outs/. results/{config.aligner}/count/{sample}/outs/
 """
 
 log = "logs/cellranger_count.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
+
+# ---------------------------------------------------------------------------
+# CELLRANGER_MULTI_ALIGN: build the VDJ reference (upstream CELLRANGER_MKVDJREF)
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "cellranger_mkvdjref"
+description = "Build the Cell Ranger VDJ reference from FASTA and filtered GTF"
+input = ["{config.fasta_prepared}", "{config.gtf_mkgtf}"]
+output = ["refs/cellranger_vdj_reference/reference.json"]
+# upstream: if (!cellranger_vdj_index && !skip_cellrangermulti_vdjref) build
+when = "config.aligner == 'cellranger' && config.cellranger_multi && config.cellranger_multi_vdj_reference == '' && !config.skip_cellrangermulti_vdjref"
+shell = "rm -rf refs/cellranger_vdj_reference; LMEM={config.cellranger_localmem}; [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ \"$LMEM\" -gt 0 ] 2>/dev/null || LMEM=1; cellranger mkvdjref --genome=refs/cellranger_vdj_reference --fasta={config.fasta_prepared} --genes={config.gtf_mkgtf} --localcores {effective_threads} --localmem $LMEM"
+
+log = "logs/cellranger_mkvdjref.log"
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+singularity = "docker://quay.io/nf-core/cellranger:10.0.0"
+
+# ---------------------------------------------------------------------------
+# CELLRANGER_MULTI_ALIGN: per-sample Cell Ranger multi (upstream CELLRANGER_MULTI
+# in subworkflows/local/align_cellrangermulti) — multiome VDJ / Ab-seq / CRO.
+# The former exclusion is closed via the engine's per-sample metadata binding
+# ([workflow] metadata_file, engine >= 0.17.0): the metadata table's
+# <modality>_fastq_1/_fastq_2 columns carry each sample's optional-modality
+# FASTQ pairs, and a missing cell renders {meta.<col>} as '' — the port's
+# equivalent of upstream's EMPTY-file injection — so the shell assembles the
+# multi config.csv with only the modalities present for the sample. GEX is
+# always present (upstream: "samples are always expected to have at least GEX
+# data") and comes from raw/<sample>_R{1,2}.fastq.gz like the count branch.
+# The three upstream index channels map to config keys: GEX =
+# cellranger_multi_gex_reference (empty = the mkref-built transcriptome),
+# VDJ = cellranger_multi_vdj_reference (empty = the mkvdjref-built one),
+# barcodes = cellranger_multi_barcodes (upstream --cellranger_multi_barcodes).
+# Each carries a fail-fast guard when the run needs it and it is unset.
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "cellranger_multi"
+description = "Cell Ranger multi per sample: per-modality FASTQs (GEX always, VDJ/Ab/CRISPR/BEAM/CMO from the metadata table) staged under fastq_all/<modality>, config.csv built with only the present modalities, then cellranger multi"
+input = [
+    "raw/{sample}_R1.fastq.gz",
+    "raw/{sample}_R2.fastq.gz",
+    "{meta.vdj_fastq_1}", "{meta.vdj_fastq_2}",
+    "{meta.ab_fastq_1}", "{meta.ab_fastq_2}",
+    "{meta.beam_fastq_1}", "{meta.beam_fastq_2}",
+    "{meta.crispr_fastq_1}", "{meta.crispr_fastq_2}",
+    "{meta.cmo_fastq_1}", "{meta.cmo_fastq_2}",
+    "{config.transcriptome}",
+]
+output = [
+    "results/{config.aligner}/multi/{sample}/outs/web_summary.html",
+    "results/{config.aligner}/multi/{sample}/outs/per_sample_outs/{sample}/count/sample_filtered_feature_bc_matrix.h5",
+]
+depends_on = ["cellranger_mkref", "cellranger_mkvdjref"]
+when = "config.aligner == 'cellranger' && config.cellranger_multi"
+shell = """
+# nf-core CELLRANGER_MULTI module (container quay.io/nf-core/cellranger:10.0.0):
+# stage reads per modality under Cell Ranger naming, assemble the multi
+# config.csv, run. Fresh-dir semantics: cellranger multi refuses to run when
+# the --id dir exists (same class as count/mkref).
+export TENX_DISABLE_TELEMETRY=1
+rm -rf {sample}
+mkdir -p fastq_all/gex fastq_all/vdj fastq_all/ab fastq_all/beam fastq_all/crispr fastq_all/cmo
+# GEX is always present (upstream: "samples are always expected to have at
+# least GEX data"); the other modalities come from the metadata table cells —
+# an empty cell (rendering '') means the modality is absent for this sample,
+# the port's equivalent of upstream's EMPTY-file injection (no engine
+# follow-up needed: absent = no [libraries] row, skipped).
+cp {input[0]} fastq_all/gex/{sample}_S1_L001_R1_001.fastq.gz
+cp {input[1]} fastq_all/gex/{sample}_S1_L001_R2_001.fastq.gz
+# stage_modality <modality> <R1> <R2>: validates the pair, stages it under
+# fastq_all/<modality>/ and echoes 1 when present, 0 when the cell is empty.
+stage_modality() {
+    if [ -n "$2" ]; then
+        [ -n "$3" ] || { echo "sample {sample}: $1_fastq_2 is empty while $1_fastq_1 is set (both columns must be filled for a present modality)" >&2; exit 1; }
+        [ -f "$2" ] || { echo "sample {sample}: $1 FASTQ not found: $2" >&2; exit 1; }
+        [ -f "$3" ] || { echo "sample {sample}: $1 FASTQ not found: $3" >&2; exit 1; }
+        cp "$2" fastq_all/$1/{sample}_S1_L001_R1_001.fastq.gz
+        cp "$3" fastq_all/$1/{sample}_S1_L001_R2_001.fastq.gz
+        echo 1
+    else
+        echo 0
+    fi
+}
+INCLUDE_VDJ=$(stage_modality vdj "{meta.vdj_fastq_1}" "{meta.vdj_fastq_2}")
+INCLUDE_AB=$(stage_modality ab "{meta.ab_fastq_1}" "{meta.ab_fastq_2}")
+INCLUDE_BEAM=$(stage_modality beam "{meta.beam_fastq_1}" "{meta.beam_fastq_2}")
+INCLUDE_CRISPR=$(stage_modality crispr "{meta.crispr_fastq_1}" "{meta.crispr_fastq_2}")
+INCLUDE_CMO=$(stage_modality cmo "{meta.cmo_fastq_1}" "{meta.cmo_fastq_2}")
+# GEX reference: cellranger_multi_gex_reference overrides the mkref-built
+# transcriptome (upstream: cellranger_gex_index || CELLRANGER_MKREF build).
+GEX_REF="{config.cellranger_multi_gex_reference}"
+[ -n "$GEX_REF" ] || GEX_REF="{config.transcriptome}"
+[ -d "$GEX_REF" ] || { echo "cellranger multi GEX reference not found: $GEX_REF (set cellranger_multi_gex_reference or keep build_cellranger_index=true)" >&2; exit 1; }
+# VDJ reference: cellranger_multi_vdj_reference overrides the mkvdjref-built
+# one (upstream: cellranger_vdj_index || CELLRANGER_MKVDJREF ||
+# skip_cellrangermulti_vdjref). A sample with VDJ FASTQs but no available
+# reference fails fast instead of upstream's silent drop.
+VDJ_REF="{config.cellranger_multi_vdj_reference}"
+if [ "$INCLUDE_VDJ" = "1" ]; then
+    if [ -z "$VDJ_REF" ]; then
+        if [ "{config.skip_cellrangermulti_vdjref}" = "true" ]; then
+            echo "sample {sample} has VDJ FASTQs but no VDJ reference: set cellranger_multi_vdj_reference (or skip_cellrangermulti_vdjref=false to build one)" >&2
+            exit 1
+        fi
+        VDJ_REF="refs/cellranger_vdj_reference"
+    fi
+    [ -d "$VDJ_REF" ] || { echo "VDJ reference not found: $VDJ_REF" >&2; exit 1; }
+fi
+# Feature-barcoding reference (antibody/CRISPR): required when those FASTQs
+# are present, mirroring upstream's ab-branch guard.
+if [ "$INCLUDE_AB" = "1" ] || [ "$INCLUDE_CRISPR" = "1" ]; then
+    [ -n "{config.cellranger_multi_fb_reference}" ] || { echo "sample {sample} has antibody/CRISPR FASTQs but no feature-barcoding reference: set cellranger_multi_fb_reference (see https://www.10xgenomics.com/support/software/cell-ranger/latest/analysis/inputs/cr-feature-ref-csv for the feature-reference CSV format)" >&2; exit 1; }
+    [ -f "{config.cellranger_multi_fb_reference}" ] || { echo "feature-barcoding reference not found: {config.cellranger_multi_fb_reference}" >&2; exit 1; }
+fi
+# CMO: the barcode table is required when CMO FASTQs are present (upstream
+# needs it to build the [samples] section; without it the cmo reads are
+# silently dropped upstream — the port fails fast instead).
+if [ "$INCLUDE_CMO" = "1" ]; then
+    [ -n "{config.cellranger_multi_barcodes}" ] || { echo "sample {sample} has CMO FASTQs but no cellranger_multi_barcodes table" >&2; exit 1; }
+    [ -f "{config.cellranger_multi_barcodes}" ] || { echo "cellranger_multi_barcodes not found: {config.cellranger_multi_barcodes}" >&2; exit 1; }
+fi
+# upstream maps aligner=cellrangermulti to the cellranger protocols table
+# (Utils.getProtocol): auto stays auto, 10XV1-4 -> SC3Pv1-4; unrecognized
+# values pass through with a warning, exactly like upstream.
+case "{config.protocol}" in
+    auto) CHEM="auto" ;;
+    10XV1) CHEM="SC3Pv1" ;;
+    10XV2) CHEM="SC3Pv2" ;;
+    10XV3) CHEM="SC3Pv3" ;;
+    10XV4) CHEM="SC3Pv4" ;;
+    *) CHEM="{config.protocol}"; echo "warning: protocol '{config.protocol}' not recognized by the pipeline; passing it on to cellranger multi unmodified" >&2 ;;
+esac
+{
+    echo "[gene-expression]"
+    echo "reference,$(realpath "$GEX_REF")"
+    echo "chemistry,$CHEM"
+    if [ -n "{config.expected_cells}" ]; then echo "expect-cells,{config.expected_cells}"; fi
+    echo "create-bam,{config.save_align_intermeds}"
+    if [ "$INCLUDE_VDJ" = "1" ]; then
+        echo
+        echo "[vdj]"
+        echo "reference,$(realpath "$VDJ_REF")"
+    fi
+    if [ "$INCLUDE_AB" = "1" ] || [ "$INCLUDE_CRISPR" = "1" ]; then
+        echo
+        echo "[feature]"
+        echo "reference,$(realpath "{config.cellranger_multi_fb_reference}")"
+    fi
+    echo
+    echo "[libraries]"
+    echo "fastq_id,fastqs,lanes,feature_types"
+    echo "{sample},./fastq_all/gex,,Gene Expression"
+    if [ "$INCLUDE_VDJ" = "1" ]; then echo "{sample},./fastq_all/vdj,,VDJ"; fi
+    if [ "$INCLUDE_AB" = "1" ]; then echo "{sample},./fastq_all/ab,,Antibody Capture"; fi
+    if [ "$INCLUDE_BEAM" = "1" ]; then echo "{sample},./fastq_all/beam,,Antigen Capture"; fi
+    if [ "$INCLUDE_CRISPR" = "1" ]; then echo "{sample},./fastq_all/crispr,,CRISPR Guide Capture"; fi
+    if [ "$INCLUDE_CMO" = "1" ]; then echo "{sample},./fastq_all/cmo,,Multiplexing Capture"; fi
+    # upstream PARSE_CELLRANGERMULTI_SAMPLESHEET splits the barcodes table per
+    # sample into <sample>_cmo.csv (header sample_id,cmo_ids,description) and
+    # the module appends the content under [samples]; the awk below selects
+    # this sample's rows from the same table in one pass.
+    if [ -n "{config.cellranger_multi_barcodes}" ]; then
+        ROWS=$(awk -F, -v s="{sample}" 'NR>1 && $1==s {print $2","$3}' "{config.cellranger_multi_barcodes}")
+        if [ -n "$ROWS" ]; then
+            echo
+            echo "[samples]"
+            echo "sample_id,cmo_ids,description"
+            echo "$ROWS"
+        fi
+    fi
+} > cellranger_multi_config.csv
+# upstream ext.args: --localcores <cpus> --localmem <memory> (and the module
+# exports TENX_DISABLE_TELEMETRY); chemistry/expect-cells/create-bam ride in
+# the config.csv [gene-expression] options like upstream.
+LMEM={config.cellranger_localmem}; [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( $(grep ^MemAvailable /proc/meminfo | tr -dc 0-9) * 2 / 3 / 1024 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=$(( {effective_memory_mb} * 2 / 3 / 1024 )); [ "$LMEM" -gt 0 ] 2>/dev/null || LMEM=1
+cellranger multi --id {sample} --csv=cellranger_multi_config.csv --localcores {effective_threads} --localmem $LMEM
+# publishDir-equivalent relocation of the outs tree (upstream publishes the
+# multi outs under outdir/cellranger/count; the port separates multi outputs
+# under results/<aligner>/multi/ to avoid output-path collision with the
+# cellranger_count rule).
+mkdir -p results/{config.aligner}/multi/{sample}/outs
+cp -r {sample}/outs/. results/{config.aligner}/multi/{sample}/outs/
+"""
+
+log = "logs/cellranger_multi.log"
 [rules.resources]
 threads = 12
 memory = "72G"
@@ -838,7 +1059,8 @@ name = "mtx_to_h5ad_raw"
 description = "Convert raw_feature_bc_matrix.h5 to h5ad (cellranger / cellrangerarc, input_type=raw)"
 input = ["results/{config.aligner}/count/{sample}/outs/raw_feature_bc_matrix.h5"]
 output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
-when = "config.aligner == 'cellranger' || config.aligner == 'cellrangerarc'"
+# cellranger_multi supersedes the count branch (mtx_to_h5ad_multi_raw takes over)
+when = "(config.aligner == 'cellranger' && !config.cellranger_multi) || config.aligner == 'cellrangerarc'"
 shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
 
 log = "logs/mtx_to_h5ad_raw.log"
@@ -854,10 +1076,54 @@ name = "mtx_to_h5ad_filtered"
 description = "Convert filtered_feature_bc_matrix.h5 to h5ad (cellranger / cellrangerarc, input_type=filtered)"
 input = ["results/{config.aligner}/count/{sample}/outs/filtered_feature_bc_matrix.h5"]
 output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
-when = "config.aligner == 'cellranger' || config.aligner == 'cellrangerarc'"
+# cellranger_multi supersedes the count branch (mtx_to_h5ad_multi_filtered takes over)
+when = "(config.aligner == 'cellranger' && !config.cellranger_multi) || config.aligner == 'cellrangerarc'"
 shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
 
 log = "logs/mtx_to_h5ad_filtered.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+# ---------------------------------------------------------------------------
+# MTX_TO_H5AD for cellranger_multi: upstream routes the per_sample_outs
+# matrices of CELLRANGER_MULTI through the same MTX_TO_H5AD process (the
+# parse_demultiplexed_output_channels channel function separates raw/filtered
+# by path); the deterministic per_sample_outs/<sample>/count/ layout makes
+# the same split expressible as two fixed input patterns. Outputs land in the
+# same results/<aligner>/mtx_conversions/ tree, so CellBender, barcode
+# subsetting, concatenation and anndataR conversion run unchanged.
+# ---------------------------------------------------------------------------
+[[rules]]
+name = "mtx_to_h5ad_multi_raw"
+description = "Convert cellranger multi per-sample raw matrix h5 to h5ad (input_type=raw)"
+input = ["results/{config.aligner}/multi/{sample}/outs/per_sample_outs/{sample}/count/sample_raw_feature_bc_matrix.h5"]
+output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_raw_matrix.h5ad"]
+depends_on = ["cellranger_multi"]
+when = "config.aligner == 'cellranger' && config.cellranger_multi"
+shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
+
+log = "logs/mtx_to_h5ad_multi_raw.log"
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/scanpy:1.10.2--e83da2205b92a538"
+
+[[rules]]
+name = "mtx_to_h5ad_multi_filtered"
+description = "Convert cellranger multi per-sample filtered matrix h5 to h5ad (input_type=filtered)"
+input = ["results/{config.aligner}/multi/{sample}/outs/per_sample_outs/{sample}/count/sample_filtered_feature_bc_matrix.h5"]
+output = ["results/{config.aligner}/mtx_conversions/{sample}/{sample}_filtered_matrix.h5ad"]
+depends_on = ["cellranger_multi"]
+when = "config.aligner == 'cellranger' && config.cellranger_multi"
+shell = "python3 scripts/mtx_to_h5ad_cellranger.py --input {input} --output {output} --sample {sample}"
+
+log = "logs/mtx_to_h5ad_multi_filtered.log"
 [rules.resources]
 threads = 6
 memory = "36G"
@@ -1403,11 +1669,12 @@ expand_inputs = [
     { pattern = "results/fastqc/{sample}_2_fastqc.html", variables = { sample = "config.samples_list" } },
     { pattern = "results/fastqc/{sample}_2_fastqc.zip", variables = { sample = "config.samples_list" } },
     { pattern = "results/{config.aligner}/count/{sample}/outs/web_summary.html", variables = { sample = "config.samples_list" } },
+    { pattern = "results/{config.aligner}/multi/{sample}/outs/web_summary.html", variables = { sample = "config.samples_list" } },
     { pattern = "results/simpleaf/{sample}/simpleaf_quant/af_quant/alevin/quants.h5ad", variables = { sample = "config.samples_list" } },
     { pattern = "results/star/{sample}/{sample}.Log.final.out", variables = { sample = "config.samples_list" } },
 ]
 output = ["results/multiqc/multiqc_report.html", "results/multiqc/multiqc_data"]
-depends_on = ["collect_versions", "workflow_summary", "methods_description", "cellranger_count", "cellrangerarc_count", "simpleaf_quant", "star_align"]
+depends_on = ["collect_versions", "workflow_summary", "methods_description", "cellranger_count", "cellranger_multi", "cellrangerarc_count", "simpleaf_quant", "star_align"]
 when = "!config.skip_multiqc"
 shell = """
 # stage inputs flat like the nf-core MULTIQC module (stageAs '?/*')
