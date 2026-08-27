@@ -11,7 +11,8 @@ results/
 /fastq_all/
 /mkref_cellranger_reference/
 
-# reference build products — the .gz sources are tracked
+# reference build products — the .gz sources and the metadata stub are tracked
 refs/*
 !refs/refdata.fa.gz
 !refs/refdata.gtf.gz
+!refs/cellranger_multi_metadata.tsv

@@ -16,6 +16,13 @@ echo "==> dry-run with default config"
 "$OXO" dry-run main.oxoflow --samples first:1 > /tmp/oxo-dryrun-$$.txt 2>&1
 grep -q "would execute" /tmp/oxo-dryrun-$$.txt
 
+echo "==> dry-run with cellranger_multi enabled (count skipped, multi planned)"
+# --arg override: cellranger_multi=true flips the cellranger branch from
+# count to multi (the upstream aligner branches are exclusive).
+"$OXO" dry-run main.oxoflow --samples first:1 --arg cellranger_multi=true > /tmp/oxo-dryrun-multi-$$.txt 2>&1
+grep -Eq "\. cellranger_multi" /tmp/oxo-dryrun-multi-$$.txt || { echo "cellranger_multi not in multi-enabled plan"; exit 1; }
+grep -Eq "\. cellranger_count.*\[skip" /tmp/oxo-dryrun-multi-$$.txt || { echo "cellranger_count not skipped with cellranger_multi=true"; exit 1; }
+
 echo "==> debug: expanded commands contain no literal {wildcards}"
 "$OXO" debug main.oxoflow | grep -q '{sample}' && { echo "unexpanded wildcards in debug output"; exit 1; } || true
 

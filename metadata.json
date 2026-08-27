@@ -12,7 +12,7 @@
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "updated": "2026-08-27",
+  "updated": "2026-08-28",
   "domain": "single-cell",
   "tags": [
     "single-cell",
@@ -38,6 +38,8 @@
     "cellranger_count",
     "cellranger_mkgtf",
     "cellranger_mkref",
+    "cellranger_mkvdjref",
+    "cellranger_multi",
     "cellrangerarc_count",
     "cellrangerarc_mkgtf",
     "cellrangerarc_mkref",
@@ -57,6 +59,8 @@
     "mtx_to_h5ad_filtered",
     "mtx_to_h5ad_kallisto_filtered",
     "mtx_to_h5ad_kallisto_raw",
+    "mtx_to_h5ad_multi_filtered",
+    "mtx_to_h5ad_multi_raw",
     "mtx_to_h5ad_raw",
     "mtx_to_h5ad_simpleaf",
     "mtx_to_h5ad_star_filtered",
@@ -70,10 +74,8 @@
     "star_genomeparams_upgrade",
     "workflow_summary"
   ],
-  "excluded": [
-    "cellrangermulti: aligner=cellrangermulti branch (multiome VDJ/Ab-seq/CRO) — structural: upstream feeds per-sample per-modality fastq groups into cellranger multi via channel branching (groupTuple + EMPTY-file injection for missing modalities) and three index channels (GEX/VDJ/cellranger_multi_barcodes); a fixed rule input signature cannot express variable modality input sets per sample — no oxo-flow analogue"
-  ],
-  "rule_count": 42,
+  "excluded": [],
+  "rule_count": 46,
   "tools": [
     "cellranger",
     "cellranger-arc",
@@ -98,7 +100,7 @@
     "gawk",
     "python"
   ],
-  "description": "Single-cell RNA-seq analysis from raw FASTQ reads to a final MultiQC report, on all five upstream aligner branches of nf-core/scrnaseq 4.2.0: cellranger (default), simpleaf (upstream default; index + quant + optional QCatch), kallisto/bustools (standard/lamanno/nac), STARsolo (incl. legacy iGenomes index upgrade), and cellrangerarc multiome ATAC+GEX. Shared downstream path: FastQC, mtx→h5ad conversion per aligner, CellBender ambient-RNA background removal (skipped for cellrangerarc, like upstream), sample-wise h5ad concatenation, optional Seurat/SingleCellExperiment export, workflow summary + methods description, MultiQC.",
+  "description": "Single-cell RNA-seq analysis from raw FASTQ reads to a final MultiQC report, on all six upstream aligner branches of nf-core/scrnaseq 4.2.0: cellranger (default, count or multi with per-modality GEX/VDJ/Ab/BEAM/CRISPR/CMO via the metadata table), simpleaf (upstream default; index + quant + optional QCatch), kallisto/bustools (standard/lamanno/nac), STARsolo (incl. legacy iGenomes index upgrade), and cellrangerarc multiome ATAC+GEX. Shared downstream path: FastQC, mtx→h5ad conversion per aligner, CellBender ambient-RNA background removal (skipped for cellrangerarc, like upstream), sample-wise h5ad concatenation, optional Seurat/SingleCellExperiment export, workflow summary + methods description, MultiQC.",
   "installation": {
     "engine": "oxo-flow >= 0.12.0",
     "toolchain": "containers (Docker/Singularity) — pinned images; conda alternatives in envs/ for non-Cell-Ranger rules (Cell Ranger rules are docker-only)",
@@ -106,6 +108,7 @@
       "reference genome FASTA, optionally gzipped (config.fasta, default refs/refdata.fa.gz)",
       "gene-annotation GTF, optionally gzipped (config.gtf, default refs/refdata.gtf.gz)",
       "raw FASTQ pair per sample: raw/<sample>_R1.fastq.gz and raw/<sample>_R2.fastq.gz (one pair per sample); for aligner=cellrangerarc five pre-named files per sample: raw/<sample>_{gex,atac}_S1_L001_R{1,2,3}_001.fastq.gz",
+      "for cellranger_multi=true only: per-modality FASTQ pairs (vdj/ab/beam/crispr/cmo) listed in refs/cellranger_multi_metadata.tsv (GEX always comes from raw/<sample>_R{1,2}.fastq.gz); empty cell = modality absent; plus optional cellranger_multi_gex_reference / cellranger_multi_vdj_reference / cellranger_multi_fb_reference / cellranger_multi_barcodes (upstream --cellranger_index / --cellranger_vdj_index / --fb_reference / --cellranger_multi_barcodes)",
       "barcode whitelist per protocol for simpleaf/star (config.whitelist; the four upstream whitelists ship under assets/whitelist/)",
       "samplesheet.csv with columns sample,fastq_1,fastq_2,protocol,expected_cells (used by the combined-h5ad step)",
       "compute: up to 12 CPUs / 72 GB per rule (index builds and alignments); 6 CPUs / 36 GB for h5ad conversion, CellBender and concat rules; concurrent per-sample rules scale with -j",
