@@ -149,6 +149,13 @@ oxo-flow run main.oxoflow -t multiqc --samples first:2
   env yamls ship in `envs/` for local runs (cellranger rules are docker-only — the
   upstream modules refuse conda profiles). `python-igraph`/`leidenalg` are not pinned
   upstream and were resolved at port time (2026-08-15) to conda-forge releases.
+- **Completion notifications** (upstream `--email` / `--email_on_fail`, and the
+  template's `--hook_url` webhook): `email="..."` sends a summary email on
+  success, `email_on_fail="..."` is the failure address (plain `email` wins on
+  failure, like upstream), `hook_url="..."` receives a `curl -X POST` with the
+  run counters on both paths. All default empty = no notifications (upstream's
+  default too). Delivered by the `[workflow] on_complete` / `on_error` hooks —
+  requires engine ≥ 0.17.0; older engines ignore the hook keys.
 - **`samplesheet`** (for `CONCAT_H5AD`): user CSV with the upstream columns
   (`sample,fastq_1,fastq_2,protocol,expected_cells`); see `test/fixtures/samplesheet.csv`.
   The `raw/` symlink in the repo root points at `test/fixtures/raw/` so `validate`/`dry-run`
@@ -177,8 +184,10 @@ MIT license is retained verbatim in [LICENSE.upstream](LICENSE.upstream).
 Rows cover every upstream process/subworkflow of nf-core/scrnaseq 4.2.0, on all
 five aligner branches. Container image strings and conda pins are copied
 verbatim from the upstream modules (all pinned, no `latest`). Deviations from
-upstream mechanics are called out per row; two structural exclusions and one
-multi-lane data limitation remain and are listed at the bottom with evidence.
+upstream mechanics are called out per row; one structural exclusion
+(cellrangermulti) and one multi-lane data limitation remain and are listed at
+the bottom with evidence. `PIPELINE_COMPLETION` is ported via workflow-level
+hooks (row below).
 
 **Live verification** (2026-08-26/27, tx-ubuntu, engine 0.15.0 + apptainer):
 five configurations passed end-to-end — `aligner = cellranger`, `simpleaf`,
@@ -216,13 +225,13 @@ in this wave.
 | `softwareVersionsToYAML` + `collectFile` | `collect_versions` | — | Writes the same file `results/pipeline_info/nf_core_scrnaseq_software_mqc_versions.yml` consumed by MultiQC. Content is the port's pinned versions (upstream collates live tool versions from a channel topic, which has no oxo-flow equivalent); since containers are pinned, the recorded versions equal the executed ones. Only the active aligner's block is emitted, like the upstream channel topic. |
 | `paramsSummaryMultiqc` + methods description | `workflow_summary`, `methods_description` | — | New default-ON rules producing the summary/methods MultiQC YAMLs from the copied-verbatim `assets/methods_description_template.yml` (the `${…}` placeholders are filled at render time; upstream fills them from the Nextflow workflow object, which has no oxo-flow equivalent). They run in the default config, so a single-sample default dry-run plan (`oxo-flow dry-run main.oxoflow --samples first:1`, as exercised by test/run.sh) shows 21 rules executing (19 baseline + these 2); with the two bundled samples the plan shows 29 running instances — documented new default behavior. |
 | `MULTIQC` | `multiqc` | multiqc 1.34 | Same command (`multiqc --force [--title] --config <assets/multiqc_config.yml> .`) with inputs staged flat like the module's `stageAs '?/*'`; the input union covers the active aligner's web summaries/logs (FastQC + cellranger web_summary + simpleaf quants.h5ad + STAR Log.final.out). Default `assets/multiqc_config.yml` copied verbatim from upstream. |
+| `PIPELINE_COMPLETION` (email/webhook) | workflow-level hooks (no rule) | sendmail / mail / curl | Same semantics, implemented as `[workflow] on_complete` / `on_error` hooks (engine ≥ 0.17.0; older engines ignore the hook keys, so released-engine runs are untouched). Success email goes to `config.email`; failure email to `config.email` when set, else `config.email_on_fail` (upstream completionEmail address selection); webhook POST (`succeeded=`/`failed=` counters) to `config.hook_url` on both paths. Email via `sendmail -t` when available, else `mail -s`; all three keys default empty — the default run never touches mail or network tools. Best-effort like upstream: a failing notification warns, never changes the run status. |
 
 **Not ported (with reasons):**
 
 | Upstream branch | Reason |
 |---|---|
 | `aligner = cellrangermulti` (multiome VDJ/Ab-seq/CRO) | Structural: upstream feeds per-sample, per-modality fastq groups into `cellranger multi` via channel branching (`groupTuple` + EMPTY-file injection for missing modalities) and three index channels (GEX/VDJ/cellranger_multi_barcodes). A fixed rule input signature cannot express a variable number of modality input sets per sample — no oxo-flow analogue exists. |
-| `PIPELINE_COMPLETION` (email/notification) | Structural: `workflow.onComplete`/`onError` hooks do not exist in the oxo-flow engine; the failure email would have to be sent by an external wrapper. |
 | `skip_cellranger_renaming` (multi-lane samples) | One fastq pair per sample is supported; the staging rename hard-codes lane `L001`. |
 
 **Other deliberate deviations** (documented per row above): FastQC is skipped

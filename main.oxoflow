@@ -8,6 +8,63 @@ version = "1.0.0"
 description = "Single-cell RNA-seq pipeline: FastQC, alignment/quantification (cellranger | cellrangerarc | simpleaf | kallisto | star), h5ad conversion, CellBender background removal, MultiQC (port of nf-core/scrnaseq 4.2.0)"
 author = "oxo-flow-community"
 
+# nf-core PIPELINE_COMPLETION port: workflow-level terminal notification
+# hooks. on_complete fires once after a run with no failed rule, on_error
+# after a run with at least one failure (engine >= 0.17.0; older engines
+# ignore these keys — the run is untouched). Both are best-effort like
+# upstream: a failing notification only warns, never changes the run status.
+# The guarded [config] keys below make the default plan exactly one no-op.
+on_complete = """
+# Success path: summary email (sendmail -t, else mail -s) + webhook.
+if [ -n "{config.email}" ]; then
+    if command -v sendmail >/dev/null 2>&1; then
+        {
+            echo "To: {config.email}"
+            echo "Subject: [oxo-flow-scrnaseq] Successful: {workdir}"
+            echo
+            echo "oxo-flow-scrnaseq completed successfully: {succeeded} succeeded, {failed} failed, {skipped} skipped"
+            echo "Workdir: {workdir}"
+        } | sendmail -t || true
+    elif command -v mail >/dev/null 2>&1; then
+        {
+            echo "oxo-flow-scrnaseq completed successfully: {succeeded} succeeded, {failed} failed, {skipped} skipped"
+            echo "Workdir: {workdir}"
+        } | mail -s "[oxo-flow-scrnaseq] Successful: {workdir}" "{config.email}" || true
+    fi
+fi
+if [ -n "{config.hook_url}" ]; then
+    command -v curl >/dev/null 2>&1 && curl -fsS -X POST "{config.hook_url}" -d "succeeded={succeeded}&failed={failed}" >/dev/null 2>&1 || true
+fi
+"""
+on_error = """
+# Failure path: summary email + webhook. Recipient matches upstream's address
+# selection (completionEmail: plain `email` wins; `email_on_fail` is the
+# failure-only address when no plain email is set).
+if [ -n "{config.email}" ] || [ -n "{config.email_on_fail}" ] || [ -n "{config.hook_url}" ]; then
+    fail_addr="{config.email}"
+    [ -n "$fail_addr" ] || fail_addr="{config.email_on_fail}"
+    if [ -n "$fail_addr" ]; then
+        if command -v sendmail >/dev/null 2>&1; then
+            {
+                echo "To: $fail_addr"
+                echo "Subject: [oxo-flow-scrnaseq] FAILED: {workdir}"
+                echo
+                echo "oxo-flow-scrnaseq run FAILED: {succeeded} succeeded, {failed} failed, {skipped} skipped"
+                echo "Workdir: {workdir}"
+            } | sendmail -t || true
+        elif command -v mail >/dev/null 2>&1; then
+            {
+                echo "oxo-flow-scrnaseq run FAILED: {succeeded} succeeded, {failed} failed, {skipped} skipped"
+                echo "Workdir: {workdir}"
+            } | mail -s "[oxo-flow-scrnaseq] FAILED: {workdir}" "$fail_addr" || true
+        fi
+    fi
+    if [ -n "{config.hook_url}" ]; then
+        command -v curl >/dev/null 2>&1 && curl -fsS -X POST "{config.hook_url}" -d "succeeded={succeeded}&failed={failed}" >/dev/null 2>&1 || true
+    fi
+fi
+"""
+
 [config]
 # --aligner / --protocol. The port implements ALL upstream aligner branches:
 # cellranger (default, matches upstream's most-tested path), simpleaf (upstream
@@ -85,6 +142,16 @@ skip_multiqc = false
 multiqc_title = ""         # -> `--title` when set
 multiqc_config = "assets/multiqc_config.yml"
 samplesheet = "test/fixtures/samplesheet.csv"   # consumed by CONCAT_H5AD (same columns as upstream)
+
+# completion notifications (nf-core PIPELINE_COMPLETION port): summary email
+# on success (`email`), failure address (`email_on_fail`) and a webhook
+# (`hook_url`). Empty = no notification, exactly like upstream's empty email
+# params. Consumed by the workflow-level on_complete / on_error hooks above
+# (engine >= 0.17.0); older engines ignore the hook keys and the run is
+# untouched.
+email = ""
+email_on_fail = ""
+hook_url = ""
 
 # engine-injected: config.samples_list holds the merged sample list (cohort group)
 

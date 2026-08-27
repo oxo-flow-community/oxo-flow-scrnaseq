@@ -71,8 +71,7 @@
     "workflow_summary"
   ],
   "excluded": [
-    "cellrangermulti: aligner=cellrangermulti branch (multiome VDJ/Ab-seq/CRO) — structural: upstream feeds per-sample per-modality fastq groups into cellranger multi via channel branching (groupTuple + EMPTY-file injection for missing modalities) and three index channels (GEX/VDJ/cellranger_multi_barcodes); a fixed rule input signature cannot express variable modality input sets per sample — no oxo-flow analogue",
-    "PIPELINE_COMPLETION: email/notification completion subworkflow — structural: workflow.onComplete/onError hooks do not exist in the oxo-flow engine; failure email must be sent by an external wrapper"
+    "cellrangermulti: aligner=cellrangermulti branch (multiome VDJ/Ab-seq/CRO) — structural: upstream feeds per-sample per-modality fastq groups into cellranger multi via channel branching (groupTuple + EMPTY-file injection for missing modalities) and three index channels (GEX/VDJ/cellranger_multi_barcodes); a fixed rule input signature cannot express variable modality input sets per sample — no oxo-flow analogue"
   ],
   "rule_count": 42,
   "tools": [
