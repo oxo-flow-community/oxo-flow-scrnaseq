@@ -102,7 +102,7 @@
   ],
   "description": "Single-cell RNA-seq analysis from raw FASTQ reads to a final MultiQC report, on all six upstream aligner branches of nf-core/scrnaseq 4.2.0: cellranger (default, count or multi with per-modality GEX/VDJ/Ab/BEAM/CRISPR/CMO via the metadata table), simpleaf (upstream default; index + quant + optional QCatch), kallisto/bustools (standard/lamanno/nac), STARsolo (incl. legacy iGenomes index upgrade), and cellrangerarc multiome ATAC+GEX. Shared downstream path: FastQC, mtx→h5ad conversion per aligner, CellBender ambient-RNA background removal (skipped for cellrangerarc, like upstream), sample-wise h5ad concatenation, optional Seurat/SingleCellExperiment export, workflow summary + methods description, MultiQC.",
   "installation": {
-    "engine": "oxo-flow >= 0.12.0",
+    "engine": "oxo-flow >= 0.13.1 ({effective_threads}/{effective_memory_mb} sizing, shipped in 0.13.1); cellranger_multi=true additionally requires >= 0.17.0 (per-sample {meta.*} metadata placeholders)",
     "toolchain": "containers (Docker/Singularity) — pinned images; conda alternatives in envs/ for non-Cell-Ranger rules (Cell Ranger rules are docker-only)",
     "requirements": [
       "reference genome FASTA, optionally gzipped (config.fasta, default refs/refdata.fa.gz)",
