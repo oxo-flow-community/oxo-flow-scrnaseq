@@ -117,5 +117,8 @@
   },
   "repo_url": "https://github.com/oxo-flow-community/oxo-flow-scrnaseq",
   "license": "Apache-2.0",
-  "upstream_license": "MIT"
+  "upstream_license": "MIT",
+  "not_applicable": [
+    "nf-core/gffread + gffread_transcriptome module is present in the upstream tree but unreachable: no include anywhere in workflows/ or subworkflows/ at 4.2.0 (only the modules.json dependency listing)"
+  ]
 }
