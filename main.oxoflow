@@ -1673,7 +1673,11 @@ expand_inputs = [
     { pattern = "results/simpleaf/{sample}/simpleaf_quant/af_quant/alevin/quants.h5ad", variables = { sample = "config.samples_list" } },
     { pattern = "results/star/{sample}/{sample}.Log.final.out", variables = { sample = "config.samples_list" } },
 ]
-output = ["results/multiqc/multiqc_report.html", "results/multiqc/multiqc_data"]
+output = [
+    "results/multiqc/multiqc_report.html",
+    "results/multiqc/multiqc_data",
+    "results/multiqc/multiqc_plots",
+]
 depends_on = ["collect_versions", "workflow_summary", "methods_description", "cellranger_count", "cellranger_multi", "cellrangerarc_count", "simpleaf_quant", "star_align"]
 when = "!config.skip_multiqc"
 shell = """
@@ -1690,7 +1694,7 @@ multiqc --force $TITLE_ARG --config {config.multiqc_config} .
 # 'results/multiqc/multiqc_data': Directory not empty")
 rm -rf results/multiqc
 mkdir -p results/multiqc
-mv multiqc_report.html multiqc_data results/multiqc/
+mv multiqc_report.html multiqc_data multiqc_plots results/multiqc/
 """
 
 log = "logs/multiqc.log"
