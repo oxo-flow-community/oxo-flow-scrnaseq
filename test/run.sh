@@ -14,7 +14,7 @@ echo "==> lint (warnings are acceptable, errors are not)"
 echo "==> dry-run with default config"
 # v0.11.0 prints the plan ("DAG: (dry-run) N rules would execute") to stderr
 "$OXO" dry-run main.oxoflow --samples first:1 > /tmp/oxo-dryrun-$$.txt 2>&1
-grep -q "would execute" /tmp/oxo-dryrun-$$.txt
+grep -Eq "would execute|To execute:" /tmp/oxo-dryrun-$$.txt
 
 echo "==> dry-run with cellranger_multi enabled (count skipped, multi planned)"
 # --arg override: cellranger_multi=true flips the cellranger branch from
